@@ -2,6 +2,12 @@
   <img src="docs/assets/heckler-logo.png" alt="Heckler" width="300">
 </p>
 
+<p align="center">
+
+[![CI](https://github.com/kholcomb/heckler/actions/workflows/ci.yml/badge.svg)](https://github.com/kholcomb/heckler/actions/workflows/ci.yml) [![PyPI version](https://img.shields.io/pypi/v/heckler)](https://pypi.org/project/heckler/)
+
+</p>
+
 # Heckler
 
 Zero-dependency Python tool that detects dangerous invisible Unicode characters in source code and dependencies. Language-agnostic source scanning covers 60+ file extensions and well-known extensionless files (Makefile, Dockerfile, etc.) across all major ecosystems. Provides coverage on 416 codepoints across 6 threat categories including Glassworm supply chain attacks (Variation Selectors), Trojan Source (bidi controls, CVE-2021-42574), zero-width steganography, tag character injection, and exotic whitespace.
@@ -33,6 +39,28 @@ heckler --vet requests==2.31.0
 # JSON or SARIF output
 heckler --format json .
 heckler --format sarif .
+```
+
+## Example
+
+```
+$ heckler suspect-project/
+
+Found 6 dangerous character(s): 3 CRITICAL, 1 HIGH, 1 MEDIUM, 1 LOW
+
+suspect-project/api.js
+  12:8   CRITICAL  U+FE01 (VARIATION SELECTOR-2) [GLASSWORM]
+  12:14  CRITICAL  U+FE02 (VARIATION SELECTOR-3) [GLASSWORM]
+
+suspect-project/auth.js
+  4:5    CRITICAL  U+202E (RIGHT-TO-LEFT OVERRIDE) [TROJAN-SOURCE]
+  4:32   HIGH      U+202C (POP DIRECTIONAL FORMATTING) [TROJAN-SOURCE]
+
+suspect-project/config.py
+  9:22   MEDIUM    U+200B (ZERO WIDTH SPACE)
+  18:5   LOW       U+00AD (SOFT HYPHEN)
+
+Total: 6 finding(s) across 3 file(s).
 ```
 
 ## What It Detects
