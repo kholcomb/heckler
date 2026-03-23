@@ -4,7 +4,7 @@
 
 <p align="center">
 
-[![CI](https://github.com/kholcomb/heckler/actions/workflows/ci.yml/badge.svg)](https://github.com/kholcomb/heckler/actions/workflows/ci.yml) [![PyPI version](https://img.shields.io/pypi/v/heckler)](https://pypi.org/project/heckler/)
+[![CI](https://github.com/kholcomb/heckler/actions/workflows/ci.yml/badge.svg)](https://github.com/kholcomb/heckler/actions/workflows/ci.yml) [![PyPI version](https://img.shields.io/pypi/v/heckler)](https://pypi.org/project/heckler/) [![GitHub Marketplace](https://img.shields.io/badge/Marketplace-HecklerDetection-blue?logo=github)](https://github.com/marketplace/actions/hecklerdetection)
 
 </p>
 
@@ -197,7 +197,7 @@ Lockfiles for Cargo, Go, Ruby, and Composer are detected but parsers are not yet
 
 ### GitHub Actions
 
-Use as a composite action:
+Available on the [GitHub Marketplace](https://github.com/marketplace/actions/hecklerdetection). Use as a composite action:
 
 ```yaml
 - uses: kholcomb/heckler@v1
@@ -221,7 +221,7 @@ Add to `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/kholcomb/heckler
-    rev: v0.1.0
+    rev: v1.0.0
     hooks:
       - id: heckler          # Scan source files
       - id: heckler-lockfile         # Scan changed dependencies on lockfile change
