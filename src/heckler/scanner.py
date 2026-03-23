@@ -58,17 +58,47 @@ class Finding:
 
 
 DEFAULT_TEXT_EXTENSIONS = frozenset({
+    # Core web / scripting
     '.js', '.cjs', '.mjs', '.ts', '.jsx', '.tsx', '.py', '.pyi', '.rb', '.go',
     '.rs', '.c', '.cpp', '.h', '.hpp', '.java', '.cs', '.php', '.sh', '.bash',
     '.zsh', '.yaml', '.yml', '.json', '.toml', '.xml', '.html', '.css', '.scss',
     '.sql', '.swift', '.kt', '.scala', '.lua', '.pl', '.r', '.md', '.txt',
     '.cfg', '.ini', '.dockerfile', '.tf', '.hcl', '.vue', '.svelte',
-    # Additional extensions to prevent evasion via uncommon file types
-    '.ps1', '.bat', '.cmd', '.fish',             # Shells
-    '.ejs', '.hbs', '.njk', '.pug', '.jinja',    # Templates
-    '.gradle', '.rake', '.cmake', '.mk',         # Build systems
-    '.graphql', '.gql', '.proto',                 # Schema/IDL
-    '.env.example', '.conf', '.properties',       # Config
+    # Shells
+    '.ps1', '.bat', '.cmd', '.fish',
+    # Templates
+    '.ejs', '.hbs', '.njk', '.pug', '.jinja',
+    # Build systems
+    '.gradle', '.rake', '.cmake', '.mk',
+    # Schema/IDL
+    '.graphql', '.gql', '.proto',
+    # Config
+    '.env.example', '.conf', '.properties',
+    # Modern / additional languages
+    '.dart',                                      # Dart / Flutter
+    '.ex', '.exs',                                # Elixir
+    '.erl', '.hrl',                               # Erlang
+    '.zig',                                        # Zig
+    '.nim',                                        # Nim
+    '.ml', '.mli',                                 # OCaml
+    '.hs', '.lhs',                                 # Haskell
+    '.clj', '.cljs', '.cljc', '.edn',             # Clojure
+    '.jl',                                         # Julia
+    '.elm',                                        # Elm
+    '.v',                                          # V / Vlang
+    '.d',                                          # D
+    '.ada', '.adb', '.ads',                        # Ada
+    '.f90', '.f95', '.f03',                        # Fortran (free-form)
+    '.groovy',                                     # Groovy
+    '.cr',                                         # Crystal
+    '.purs',                                       # PureScript
+    '.rkt',                                        # Racket
+    '.lisp', '.cl', '.el',                         # Lisp / Common Lisp / Emacs Lisp
+    '.asm', '.s',                                  # Assembly
+    '.m', '.mm',                                   # Objective-C / Objective-C++
+    '.vb', '.vbs',                                 # Visual Basic
+    '.pp', '.pas',                                 # Pascal / Delphi
+    '.tcl',                                        # Tcl
 })
 
 DEFAULT_SKIP_DIRS = frozenset({

@@ -231,3 +231,18 @@ class TestExtendedExtensions:
         scanner = Scanner()
         findings = scanner.scan_file(f)
         assert len(findings) == 1
+
+    @pytest.mark.parametrize("ext", [
+        ".dart", ".ex", ".exs", ".erl", ".hrl", ".zig", ".nim",
+        ".ml", ".mli", ".hs", ".lhs", ".clj", ".cljs", ".cljc",
+        ".jl", ".elm", ".v", ".d", ".ada", ".adb", ".ads",
+        ".f90", ".groovy", ".cr", ".purs", ".rkt",
+        ".lisp", ".cl", ".el", ".asm", ".s",
+        ".m", ".mm", ".vb", ".vbs", ".pp", ".pas", ".tcl",
+    ])
+    def test_modern_language_extensions_scanned(self, tmp_path: Path, ext: str) -> None:
+        f = tmp_path / f"test{ext}"
+        f.write_text('payload = "\uFE01"\n', encoding='utf-8')
+        scanner = Scanner()
+        findings = scanner.scan_file(f)
+        assert len(findings) == 1, f"Extension {ext} was not scanned"
