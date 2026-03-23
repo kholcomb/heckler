@@ -1,4 +1,4 @@
-name: 'Glassworm Detect'
+name: 'Heckler'
 description: 'Detect dangerous invisible Unicode characters (Glassworm, Trojan Source, etc.)'
 branding:
   icon: 'shield'
@@ -34,7 +34,7 @@ runs:
   using: 'composite'
   steps:
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: '3.x'
 
@@ -67,7 +67,7 @@ runs:
 
     - name: Upload SARIF
       if: inputs.upload-sarif == 'true' && always()
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@v4
       with:
         sarif_file: heckler-results.sarif
         category: heckler
