@@ -163,12 +163,39 @@ DEP_SCAN_EXTENSIONS = frozenset({
 
 IGNORE_COMMENT = "heckler-ignore"
 
-# Pattern requires heckler-ignore to appear after a comment token.
-# Matches: // heckler-ignore, # heckler-ignore, /* heckler-ignore */,
-#          -- heckler-ignore, ; heckler-ignore
-_IGNORE_PATTERN = re.compile(
-    r'(?://|#|/\*|--|;)\s*heckler-ignore'
+# Next-line suppression directive with optional codepoint list.
+# Must appear on its own line (only whitespace + comment token before it).
+# Format:  // heckler-ignore-next-line [U+XXXX U+YYYY ...]
+#          # heckler-ignore-next-line U+FE0F
+# The codepoints listed are the ONLY ones suppressed on the next line.
+# If no codepoints are listed, all findings on the next line are suppressed.
+_IGNORE_NEXT_LINE_RE = re.compile(
+    r'^\s*(?://|#|/\*|--|;)\s*heckler-ignore-next-line'
+    r'(?:\s+((?:U\+[0-9A-Fa-f]{4,6}\s*)+))?'
+    r'\s*(?:\*/\s*)?$'
 )
+
+# Legacy inline directive (end-of-line anchor prevents mid-string injection).
+# Deprecated in favor of heckler-ignore-next-line but still supported for
+# project code. Never honored in dependency code.
+_IGNORE_INLINE_RE = re.compile(
+    r'(?://|#|/\*|--|;)\s*heckler-ignore'
+    r'(?:\s+((?:U\+[0-9A-Fa-f]{4,6}\s*)+))?'
+    r'\s*(?:\*/\s*)?$'
+)
+
+_CODEPOINT_RE = re.compile(r'U\+([0-9A-Fa-f]{4,6})')
+
+
+def _parse_suppressed_codepoints(directive_match: re.Match[str]) -> frozenset[int] | None:
+    """Extract codepoints from a suppression directive.
+
+    Returns a frozenset of codepoint ints, or None meaning "suppress all".
+    """
+    cp_str = directive_match.group(1)
+    if not cp_str:
+        return None  # no codepoints listed → suppress all
+    return frozenset(int(m.group(1), 16) for m in _CODEPOINT_RE.finditer(cp_str))
 
 _BINARY_CHECK_SIZE = 8192
 
@@ -187,17 +214,43 @@ class Scanner:
         """Scan a text string for dangerous Unicode. The core primitive."""
         findings: list[Finding] = []
         source, package = self._classify_path(filename)
+        is_dependency = source == "dependency"
 
         # Use split('\n') instead of splitlines() — splitlines() treats
         # U+2028/U+2029 as line terminators, consuming them before the regex
         # can detect them.
-        for line_num, line in enumerate(text.split('\n'), 1):
-            if _IGNORE_PATTERN.search(line):
-                continue
+        lines = text.split('\n')
+        # Suppressed codepoints for the next line (from heckler-ignore-next-line).
+        # None means "suppress all", a frozenset means "suppress only these".
+        _NO_SUPPRESS: frozenset[int] = frozenset()
+        next_line_suppress: frozenset[int] | None = _NO_SUPPRESS
+
+        for line_num, line in enumerate(lines, 1):
+            # Determine suppression for this line
+            suppress: frozenset[int] | None = next_line_suppress
+            next_line_suppress = _NO_SUPPRESS
+
+            # Never honor suppression directives in dependency code —
+            # a malicious package author could embed them to hide attacks.
+            if not is_dependency:
+                # Check for next-line directive (applies to the NEXT line)
+                nl_match = _IGNORE_NEXT_LINE_RE.match(line)
+                if nl_match:
+                    next_line_suppress = _parse_suppressed_codepoints(nl_match)
+                    continue  # directive line itself is not scanned
+
+                # Legacy inline directive (end-of-line anchored)
+                inline_match = _IGNORE_INLINE_RE.search(line)
+                if inline_match:
+                    suppress = _parse_suppressed_codepoints(inline_match)
+
             for match in DANGEROUS_UNICODE_RE.finditer(line):
                 cp = ord(match.group()[0])
                 # BOM at file start is typically legitimate
                 if cp == 0xFEFF and line_num == 1 and match.start() == 0 and self.allow_bom:
+                    continue
+                # Check suppression: None = all, non-empty frozenset = specific
+                if suppress is None or cp in suppress:
                     continue
                 info = get_char_info(cp)
                 if info.severity >= self.severity_threshold:

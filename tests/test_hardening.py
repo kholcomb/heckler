@@ -59,10 +59,86 @@ class TestLineParagraphSeparators:
 
 
 # ---------------------------------------------------------------------------
-# 2. heckler-ignore comment enforcement
+# 2. Suppression directive hardening
 # ---------------------------------------------------------------------------
 
-class TestIgnoreCommentHardening:
+class TestNextLineDirective:
+    """Tests for the heckler-ignore-next-line directive."""
+
+    def test_next_line_suppresses_all(self) -> None:
+        scanner = Scanner()
+        text = '// heckler-ignore-next-line\nconst x = "\uFE01\u202E";\n'
+        assert scanner.scan_text(text) == []
+
+    def test_next_line_python_comment(self) -> None:
+        scanner = Scanner()
+        text = '# heckler-ignore-next-line\nx = "\uFE01"\n'
+        assert scanner.scan_text(text) == []
+
+    def test_next_line_sql_comment(self) -> None:
+        scanner = Scanner()
+        text = '-- heckler-ignore-next-line\nSELECT "\uFE01";\n'
+        assert scanner.scan_text(text) == []
+
+    def test_next_line_block_comment(self) -> None:
+        scanner = Scanner()
+        text = '/* heckler-ignore-next-line */\nconst x = "\uFE01";\n'
+        assert scanner.scan_text(text) == []
+
+    def test_next_line_semicolon_comment(self) -> None:
+        scanner = Scanner()
+        text = '; heckler-ignore-next-line\nkey = "\uFE01"\n'
+        assert scanner.scan_text(text) == []
+
+    def test_next_line_only_affects_one_line(self) -> None:
+        scanner = Scanner()
+        text = '// heckler-ignore-next-line\nconst x = "\uFE01";\nconst y = "\uFE02";\n'
+        findings = scanner.scan_text(text)
+        assert len(findings) == 1
+        assert findings[0].codepoint == 0xFE02
+
+    def test_next_line_directive_itself_not_scanned(self) -> None:
+        scanner = Scanner()
+        text = '// heckler-ignore-next-line\nclean line\n'
+        assert scanner.scan_text(text) == []
+
+
+class TestCodepointSpecificSuppression:
+    """Tests for codepoint-specific suppression (U+XXXX)."""
+
+    def test_next_line_specific_codepoint_suppressed(self) -> None:
+        scanner = Scanner()
+        text = '// heckler-ignore-next-line U+FE0F\nconst emoji = "\uFE0F";\n'
+        assert scanner.scan_text(text) == []
+
+    def test_next_line_specific_codepoint_others_still_found(self) -> None:
+        scanner = Scanner()
+        text = '// heckler-ignore-next-line U+FE0F\nconst x = "\uFE0F\u202E";\n'
+        findings = scanner.scan_text(text)
+        assert len(findings) == 1
+        assert findings[0].codepoint == 0x202E
+
+    def test_next_line_multiple_codepoints(self) -> None:
+        scanner = Scanner()
+        text = '// heckler-ignore-next-line U+FE0F U+FE0E\nconst x = "\uFE0F\uFE0E";\n'
+        assert scanner.scan_text(text) == []
+
+    def test_inline_specific_codepoint(self) -> None:
+        scanner = Scanner()
+        text = 'const x = "\uFE0F"; // heckler-ignore U+FE0F\n'
+        assert scanner.scan_text(text) == []
+
+    def test_inline_specific_codepoint_others_found(self) -> None:
+        scanner = Scanner()
+        text = 'const x = "\uFE0F\u202E"; // heckler-ignore U+FE0F\n'
+        findings = scanner.scan_text(text)
+        assert len(findings) == 1
+        assert findings[0].codepoint == 0x202E
+
+
+class TestLegacyInlineSuppression:
+    """Legacy inline heckler-ignore still works for project code."""
+
     def test_js_comment_still_works(self) -> None:
         scanner = Scanner()
         text = 'const x = "\uFE01"; // heckler-ignore\n'
@@ -88,13 +164,37 @@ class TestIgnoreCommentHardening:
         text = 'key = "\uFE01" ; heckler-ignore\n'
         assert scanner.scan_text(text) == []
 
+
+class TestSuppressionBypassPrevention:
+    """Verify that known bypass vectors are blocked."""
+
+    def test_url_fragment_does_not_suppress(self) -> None:
+        """#heckler-ignore inside a URL must NOT suppress detection."""
+        scanner = Scanner()
+        text = 'const url = "https://evil.com#heckler-ignore"; const x = "\u202E";\n'
+        findings = scanner.scan_text(text)
+        assert any(f.codepoint == 0x202E for f in findings)
+
+    def test_url_double_slash_does_not_suppress(self) -> None:
+        """//heckler-ignore inside a URL must NOT suppress detection."""
+        scanner = Scanner()
+        text = 'const url = "http://proxy//heckler-ignore\u202E";\n'
+        findings = scanner.scan_text(text)
+        assert any(f.codepoint == 0x202E for f in findings)
+
     def test_string_literal_does_not_suppress(self) -> None:
-        """An adversary placing heckler-ignore inside a string should NOT
-        suppress detection of dangerous chars on the same line."""
         scanner = Scanner()
         text = 'x = "heckler-ignore"; auth = "\u202E"\n'
         findings = scanner.scan_text(text)
-        assert len(findings) >= 1
+        assert any(f.codepoint == 0x202E for f in findings)
+
+    def test_mid_line_directive_with_trailing_code(self) -> None:
+        """Inline directive with code after it should NOT suppress."""
+        scanner = Scanner()
+        text = 'x = 1; // heckler-ignore\n; y = "\u202E";\n'
+        # The directive is end-of-line anchored, so line 1 is suppressed
+        # but line 2 (with the dangerous char) is not
+        findings = scanner.scan_text(text)
         assert any(f.codepoint == 0x202E for f in findings)
 
     def test_variable_name_does_not_suppress(self) -> None:
@@ -108,6 +208,43 @@ class TestIgnoreCommentHardening:
         text = 'msg = "run heckler-ignore check \uFE01"\n'
         findings = scanner.scan_text(text)
         assert len(findings) == 1
+
+
+class TestDependencySuppressionBlocked:
+    """Suppression directives must NEVER be honored in dependency code."""
+
+    def test_dependency_inline_ignore_not_honored(self) -> None:
+        scanner = Scanner()
+        text = 'const x = "\uFE01"; // heckler-ignore\n'
+        findings = scanner.scan_text(text, "node_modules/evil/index.js")
+        assert len(findings) == 1
+        assert findings[0].codepoint == 0xFE01
+
+    def test_dependency_next_line_not_honored(self) -> None:
+        scanner = Scanner()
+        text = '// heckler-ignore-next-line\nconst x = "\u202E";\n'
+        findings = scanner.scan_text(text, "node_modules/evil/index.js")
+        assert len(findings) == 1
+        assert findings[0].codepoint == 0x202E
+
+    def test_dependency_codepoint_specific_not_honored(self) -> None:
+        scanner = Scanner()
+        text = '// heckler-ignore-next-line U+FE0F\nconst x = "\uFE0F";\n'
+        findings = scanner.scan_text(text, "node_modules/evil/index.js")
+        assert len(findings) == 1
+
+    def test_dependency_site_packages_not_honored(self) -> None:
+        scanner = Scanner()
+        text = '# heckler-ignore-next-line\nx = "\uFE01"\n'
+        findings = scanner.scan_text(text, "site-packages/evil/__init__.py")
+        assert len(findings) == 1
+
+    def test_project_code_still_honored(self) -> None:
+        """Sanity check: same directive works for project code."""
+        scanner = Scanner()
+        text = '// heckler-ignore-next-line\nconst x = "\u202E";\n'
+        findings = scanner.scan_text(text, "src/app.js")
+        assert findings == []
 
 
 # ---------------------------------------------------------------------------
