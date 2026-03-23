@@ -480,3 +480,48 @@ class TestTargetDirClassifiedAsDependency:
         findings = scanner.scan_text(text, "target/some-crate/src/lib.rs")
         assert findings[0].source == "dependency"
         assert findings[0].package == "some-crate"
+
+
+# ---------------------------------------------------------------------------
+# 11. Non-UTF-8 encoding detection (prevents encoding evasion)
+# ---------------------------------------------------------------------------
+
+class TestEncodingDetection:
+    """Files encoded as UTF-16/32 must be decoded correctly so that
+    dangerous codepoints are not missed."""
+
+    def test_utf16_le_bom_detected(self, tmp_path: Path) -> None:
+        f = tmp_path / "evil.js"
+        f.write_bytes('const x = "\u202E";\n'.encode('utf-16-le'))
+        # prepend BOM
+        f.write_bytes(b'\xff\xfe' + 'const x = "\u202E";\n'.encode('utf-16-le'))
+        findings = Scanner().scan_file(f)
+        assert any(fd.codepoint == 0x202E for fd in findings)
+
+    def test_utf16_be_bom_detected(self, tmp_path: Path) -> None:
+        f = tmp_path / "evil.js"
+        f.write_bytes(b'\xfe\xff' + 'const x = "\u202E";\n'.encode('utf-16-be'))
+        findings = Scanner().scan_file(f)
+        assert any(fd.codepoint == 0x202E for fd in findings)
+
+    def test_utf32_le_bom_detected(self, tmp_path: Path) -> None:
+        f = tmp_path / "evil.js"
+        f.write_bytes(b'\xff\xfe\x00\x00' + 'const x = "\u202E";\n'.encode('utf-32-le'))
+        findings = Scanner().scan_file(f)
+        assert any(fd.codepoint == 0x202E for fd in findings)
+
+    def test_utf8_still_works(self, tmp_path: Path) -> None:
+        """Regression: normal UTF-8 files must still be scanned."""
+        f = tmp_path / "normal.js"
+        f.write_text('const x = "\u202E";\n')
+        findings = Scanner().scan_file(f)
+        assert len(findings) == 1
+
+    def test_utf16_not_misdetected_as_binary(self, tmp_path: Path) -> None:
+        """UTF-16 files contain null bytes — they must NOT be skipped."""
+        f = tmp_path / "data.js"
+        text = 'let payload = "\uFE0F";\n'
+        f.write_bytes(b'\xff\xfe' + text.encode('utf-16-le'))
+        findings = Scanner().scan_file(f)
+        assert len(findings) == 1
+        assert findings[0].codepoint == 0xFE0F

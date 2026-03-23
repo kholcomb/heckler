@@ -199,6 +199,22 @@ def _parse_suppressed_codepoints(directive_match: re.Match[str]) -> frozenset[in
 
 _BINARY_CHECK_SIZE = 8192
 
+# BOM signatures ordered longest-first so UTF-32 is checked before UTF-16.
+_BOM_TABLE: list[tuple[bytes, str]] = [
+    (b'\xff\xfe\x00\x00', 'utf-32-le'),
+    (b'\x00\x00\xfe\xff', 'utf-32-be'),
+    (b'\xff\xfe',         'utf-16-le'),
+    (b'\xfe\xff',         'utf-16-be'),
+]
+
+
+def _detect_bom_encoding(raw: bytes) -> str | None:
+    """Return the codec name if *raw* starts with a UTF-16/32 BOM."""
+    for sig, codec in _BOM_TABLE:
+        if raw[:len(sig)] == sig:
+            return codec
+    return None
+
 
 @dataclass
 class Scanner:
@@ -273,6 +289,19 @@ class Scanner:
         except (OSError, PermissionError):
             return []
 
+        # Detect non-UTF-8 encodings via BOM signatures.  UTF-16/32 files
+        # contain embedded null bytes that would otherwise cause the scanner
+        # to treat them as binary and skip the content entirely — an attacker
+        # could exploit this by committing a UTF-16 encoded file.
+        encoding = _detect_bom_encoding(raw)
+        if encoding:
+            try:
+                text = raw.decode(encoding, errors='replace')
+                return self.scan_text(text, str(filepath))
+            except Exception:
+                return []
+
+        # UTF-8 path (no BOM or UTF-8 BOM already handled by codec)
         # Check for null bytes — scan text before the first null instead
         # of skipping the entire file (prevents null-byte injection bypass)
         null_pos = raw.find(b'\x00')
