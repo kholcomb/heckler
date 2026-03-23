@@ -119,3 +119,79 @@ class TestSafeTarExtract:
         extract_dir.mkdir()
         with pytest.raises(_UnsafeArchiveError, match="(?i)unsafe|link|absolute"):
             _safe_tar_extract(tar_path, extract_dir, extract_dir.resolve())
+
+
+class TestVetEndToEnd:
+    """End-to-end vet tests using locally-built archives (no network)."""
+
+    def _make_npm_tgz(self, tmp_path: Path, files: dict[str, bytes]) -> Path:
+        """Build a .tgz mimicking npm pack output (files under package/ prefix)."""
+        tgz_path = tmp_path / "evil-pkg-1.0.0.tgz"
+        with tarfile.open(tgz_path, "w:gz") as tf:
+            for name, content in files.items():
+                info = tarfile.TarInfo(name=f"package/{name}")
+                info.size = len(content)
+                tf.addfile(info, io.BytesIO(content))
+        return tgz_path
+
+    def test_extract_and_scan_finds_glassworm(self, tmp_path: Path) -> None:
+        """Build a fake npm package with Glassworm variation selectors,
+        extract it, and verify the scanner finds them."""
+        from heckler.config import Config
+        from heckler.scanner import Scanner
+
+        # JS file with planted Glassworm variation selectors
+        evil_js = f'const payload = `\uFE00\uFE01\uFE0F`;\n'.encode("utf-8")
+        clean_js = b'module.exports = {};\n'
+
+        tgz = self._make_npm_tgz(tmp_path, {
+            "index.js": evil_js,
+            "util.js": clean_js,
+            "package.json": b'{"name": "evil-pkg", "version": "1.0.0"}',
+        })
+
+        # Extract
+        extract_dir = extract_package(tgz, str(tmp_path))
+
+        # Scan the extracted package
+        scanner = Scanner(
+            skip_dirs=frozenset(),
+            scan_deps=True,
+        )
+        findings = scanner.scan_path(extract_dir)
+
+        assert len(findings) == 3
+        assert all(f.category.value == "variation_selector" for f in findings)
+        assert all(f.severity.value == "critical" for f in findings)
+
+    def test_extract_and_scan_clean_package(self, tmp_path: Path) -> None:
+        """A clean package should produce zero findings."""
+        from heckler.scanner import Scanner
+
+        tgz = self._make_npm_tgz(tmp_path, {
+            "index.js": b'module.exports = { add: (a, b) => a + b };\n',
+            "package.json": b'{"name": "clean-pkg", "version": "1.0.0"}',
+        })
+
+        extract_dir = extract_package(tgz, str(tmp_path))
+        scanner = Scanner(skip_dirs=frozenset(), scan_deps=True)
+        findings = scanner.scan_path(extract_dir)
+        assert findings == []
+
+    def test_extract_and_scan_wheel(self, tmp_path: Path) -> None:
+        """Build a fake .whl (zip) with a planted bidi attack, extract, scan."""
+        from heckler.scanner import Scanner
+
+        evil_py = f'access = "\u202Eadmin"\n'.encode("utf-8")
+        whl_path = tmp_path / "evil_pkg-1.0.0-py3-none-any.whl"
+        with zipfile.ZipFile(whl_path, "w") as zf:
+            zf.writestr("evil_pkg/__init__.py", evil_py)
+            zf.writestr("evil_pkg/utils.py", b"x = 1\n")
+
+        extract_dir = extract_package(whl_path, str(tmp_path))
+        scanner = Scanner(skip_dirs=frozenset(), scan_deps=True)
+        findings = scanner.scan_path(extract_dir)
+
+        assert len(findings) == 1
+        assert findings[0].codepoint_hex == "U+202E"
+        assert findings[0].severity.value == "critical"
