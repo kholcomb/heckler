@@ -1,0 +1,163 @@
+name: Test Action
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  clean-scan:
+    name: Clean repo scan (should pass)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Run heckler action
+        uses: ./
+
+  severity-levels:
+    name: Severity filter (${{ matrix.severity }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        severity: [critical, high, medium, low]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Run heckler action
+        uses: ./
+        with:
+          severity: ${{ matrix.severity }}
+
+  sarif-output:
+    name: SARIF output format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Run heckler action (sarif)
+        uses: ./
+        with:
+          format: sarif
+
+  json-output:
+    name: JSON output format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Run heckler action (json)
+        uses: ./
+        with:
+          format: json
+
+  detect-trojan-source:
+    name: Detect dangerous Unicode (should fail)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Create file with bidi override (Trojan Source)
+        run: |
+          mkdir -p /tmp/heckler-test
+          printf 'var isAdmin = false;\n// Check if admin\u202Aif (isAdmin)\u202C {\n  grantAccess();\n}\n' > /tmp/heckler-test/evil.js
+
+      - name: Run heckler action (expect failure)
+        id: scan
+        uses: ./
+        with:
+          path: /tmp/heckler-test
+        continue-on-error: true
+
+      - name: Verify detection
+        env:
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+        run: |
+          if [ "$SCAN_OUTCOME" = "failure" ]; then
+            echo "Action correctly detected dangerous Unicode"
+          else
+            echo "::error::Action should have failed on Trojan Source input"
+            exit 1
+          fi
+
+  detect-zero-width:
+    name: Detect zero-width characters (should fail)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Create file with zero-width joiners
+        run: |
+          mkdir -p /tmp/heckler-test
+          printf 'const pa\xe2\x80\x8bssword = "hunter2";\n' > /tmp/heckler-test/sneaky.js
+
+      - name: Run heckler action (expect failure)
+        id: scan
+        uses: ./
+        with:
+          path: /tmp/heckler-test
+        continue-on-error: true
+
+      - name: Verify detection
+        env:
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+        run: |
+          if [ "$SCAN_OUTCOME" = "failure" ]; then
+            echo "Action correctly detected zero-width characters"
+          else
+            echo "::error::Action should have failed on zero-width input"
+            exit 1
+          fi
+
+  detect-variation-selector:
+    name: Detect variation selectors / Glassworm (should fail)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Create file with variation selector
+        run: |
+          mkdir -p /tmp/heckler-test
+          printf 'import o\xef\xb8\x80s\nos.system("echo pwned")\n' > /tmp/heckler-test/glassworm.py
+
+      - name: Run heckler action (expect failure)
+        id: scan
+        uses: ./
+        with:
+          path: /tmp/heckler-test
+        continue-on-error: true
+
+      - name: Verify detection
+        env:
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+        run: |
+          if [ "$SCAN_OUTCOME" = "failure" ]; then
+            echo "Action correctly detected variation selector (Glassworm)"
+          else
+            echo "::error::Action should have failed on Glassworm input"
+            exit 1
+          fi
+
+  sarif-upload:
+    name: SARIF upload flow
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Run heckler action with SARIF upload
+        uses: ./
+        with:
+          upload-sarif: 'true'
+
+  custom-config:
+    name: Custom config file
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Run heckler with project config
+        uses: ./
+        with:
+          config: .heckler.yml
