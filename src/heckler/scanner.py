@@ -230,7 +230,7 @@ class Scanner:
         """Scan a text string for dangerous Unicode. The core primitive."""
         findings: list[Finding] = []
         source, package = self._classify_path(filename)
-        is_dependency = source == "dependency"
+        is_dependency = source == "dependency" or self.scan_deps
 
         # Use split('\n') instead of splitlines() — splitlines() treats
         # U+2028/U+2029 as line terminators, consuming them before the regex
