@@ -1,4 +1,4 @@
-name: 'Heckler'
+name: 'HecklerDetection'
 description: 'Detect dangerous invisible Unicode characters (Glassworm, Trojan Source, etc.)'
 branding:
   icon: 'shield'
