@@ -6,7 +6,6 @@ only those package directories — fast enough for pre-commit (<2s).
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -54,7 +53,7 @@ def get_lockfile_diff(lockfile_path: str) -> str:
 
 
 def parse_changed_packages(diff_text: str, ecosystem: str) -> list[tuple[str, str]]:
-    """Parse a lockfile diff to extract (package_name, version) tuples for added/changed packages."""
+    """Parse a lockfile diff to extract (name, version) tuples for added/changed packages."""
     if ecosystem == 'npm':
         return _parse_npm_lockfile_diff(diff_text)
     elif ecosystem in ('pip', 'poetry'):
@@ -124,10 +123,7 @@ def _parse_yarn_diff(diff_text: str) -> list[tuple[str, str]]:
             if entry.startswith('@'):
                 # Scoped: @scope/name@version
                 rest = entry[1:]
-                if '@' in rest:
-                    name = '@' + rest.rsplit('@', 1)[0]
-                else:
-                    name = entry
+                name = '@' + rest.rsplit('@', 1)[0] if '@' in rest else entry
             else:
                 name = entry.rsplit('@', 1)[0]
             packages.append((name, ''))
@@ -147,10 +143,11 @@ def _parse_pnpm_diff(diff_text: str) -> list[tuple[str, str]]:
             if entry.startswith('@'):
                 # Scoped
                 rest = entry[1:]
-                if '@' in rest.split('/', 1)[-1]:
-                    name = '@' + rest.rsplit('@', 1)[0]
-                else:
-                    name = entry
+                name = (
+                    '@' + rest.rsplit('@', 1)[0]
+                    if '@' in rest.split('/', 1)[-1]
+                    else entry
+                )
             else:
                 name = entry.rsplit('@', 1)[0]
             packages.append((name, ''))

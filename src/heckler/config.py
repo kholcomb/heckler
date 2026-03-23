@@ -6,7 +6,7 @@ Zero external dependencies — includes a minimal YAML parser for the flat confi
 
 from __future__ import annotations
 
-import os
+import contextlib
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -56,10 +56,8 @@ def load_config(
 
     if 'severity' in raw:
         sev_str = str(raw['severity']).upper()
-        try:
+        with contextlib.suppress(KeyError):
             config.severity_threshold = Severity[sev_str]
-        except KeyError:
-            pass
 
     if 'allowlist' in raw and isinstance(raw['allowlist'], list):
         config.exclude_patterns = [str(p) for p in raw['allowlist']]
@@ -103,13 +101,16 @@ def _load_pyproject_section() -> dict[str, object]:
             data = tomllib.load(f)
     except ImportError:
         try:
-            import tomli as tomllib  # type: ignore[import-untyped,no-redef]
+            import tomli as tomllib  # type: ignore[import-not-found]
             with open(pyproject, 'rb') as f:
                 data = tomllib.load(f)
         except ImportError:
             return {}
-    tool = data.get('tool', {})
-    return tool.get('heckler', {})
+    tool: dict[str, object] = data.get('tool', {})
+    if not isinstance(tool, dict):
+        return {}
+    result = tool.get('heckler', {})
+    return result if isinstance(result, dict) else {}
 
 
 def _minimal_yaml_parse(text: str) -> dict[str, object]:

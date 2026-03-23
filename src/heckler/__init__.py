@@ -1,5 +1,7 @@
 """heckler: Detect dangerous invisible Unicode characters."""
 
+from __future__ import annotations
+
 from ._version import __version__
 from .characters import Severity, ThreatCategory
 from .config import Config, load_config

@@ -89,30 +89,63 @@ CHAR_DB: dict[int, CharInfo] = {
     0x2062: CharInfo("Invisible Times", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
     0x2063: CharInfo("Invisible Separator", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
     0x2064: CharInfo("Invisible Plus", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
-    0xFFF9: CharInfo("Interlinear Annotation Anchor", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
-    0xFFFA: CharInfo("Interlinear Annotation Separator", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
-    0xFFFB: CharInfo("Interlinear Annotation Terminator", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
+    0xFFF9: CharInfo(
+        "Interlinear Annotation Anchor", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM,
+    ),
+    0xFFFA: CharInfo(
+        "Interlinear Annotation Separator", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM,
+    ),
+    0xFFFB: CharInfo(
+        "Interlinear Annotation Terminator", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM,
+    ),
     # Deprecated format chars
-    0x206A: CharInfo("Inhibit Symmetric Swapping", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
-    0x206B: CharInfo("Activate Symmetric Swapping", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
-    0x206C: CharInfo("Inhibit Arabic Form Shaping", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
-    0x206D: CharInfo("Activate Arabic Form Shaping", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
+    0x206A: CharInfo(
+        "Inhibit Symmetric Swapping", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM,
+    ),
+    0x206B: CharInfo(
+        "Activate Symmetric Swapping", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM,
+    ),
+    0x206C: CharInfo(
+        "Inhibit Arabic Form Shaping", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM,
+    ),
+    0x206D: CharInfo(
+        "Activate Arabic Form Shaping", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM,
+    ),
     0x206E: CharInfo("National Digit Shapes", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
     0x206F: CharInfo("Nominal Digit Shapes", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
     # Invisible identifiers (MEDIUM)
-    0x3164: CharInfo("Hangul Filler", ThreatCategory.INVISIBLE_IDENTIFIER, Severity.MEDIUM),
-    0xFFA0: CharInfo("Halfwidth Hangul Filler", ThreatCategory.INVISIBLE_IDENTIFIER, Severity.MEDIUM),
+    0x3164: CharInfo(
+        "Hangul Filler", ThreatCategory.INVISIBLE_IDENTIFIER, Severity.MEDIUM,
+    ),
+    0xFFA0: CharInfo(
+        "Halfwidth Hangul Filler", ThreatCategory.INVISIBLE_IDENTIFIER, Severity.MEDIUM,
+    ),
     0x2800: CharInfo("Braille Pattern Blank", ThreatCategory.INVISIBLE_IDENTIFIER, Severity.MEDIUM),
-    0x115F: CharInfo("Hangul Choseong Filler", ThreatCategory.INVISIBLE_IDENTIFIER, Severity.MEDIUM),
-    0x1160: CharInfo("Hangul Jungseong Filler", ThreatCategory.INVISIBLE_IDENTIFIER, Severity.MEDIUM),
+    0x115F: CharInfo(
+        "Hangul Choseong Filler", ThreatCategory.INVISIBLE_IDENTIFIER, Severity.MEDIUM,
+    ),
+    0x1160: CharInfo(
+        "Hangul Jungseong Filler", ThreatCategory.INVISIBLE_IDENTIFIER, Severity.MEDIUM,
+    ),
     # Additional invisible format chars
     0x034F: CharInfo("Combining Grapheme Joiner", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
     0x17B4: CharInfo("Khmer Vowel Inherent Aq", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
     0x17B5: CharInfo("Khmer Vowel Inherent Aa", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
-    0x180B: CharInfo("Mongolian Free Variation Selector One", ThreatCategory.VARIATION_SELECTOR, Severity.HIGH),
-    0x180C: CharInfo("Mongolian Free Variation Selector Two", ThreatCategory.VARIATION_SELECTOR, Severity.HIGH),
-    0x180D: CharInfo("Mongolian Free Variation Selector Three", ThreatCategory.VARIATION_SELECTOR, Severity.HIGH),
-    0xFFFC: CharInfo("Object Replacement Character", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
+    0x180B: CharInfo(
+        "Mongolian Free Variation Selector One",
+        ThreatCategory.VARIATION_SELECTOR, Severity.HIGH,
+    ),
+    0x180C: CharInfo(
+        "Mongolian Free Variation Selector Two",
+        ThreatCategory.VARIATION_SELECTOR, Severity.HIGH,
+    ),
+    0x180D: CharInfo(
+        "Mongolian Free Variation Selector Three",
+        ThreatCategory.VARIATION_SELECTOR, Severity.HIGH,
+    ),
+    0xFFFC: CharInfo(
+        "Object Replacement Character", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM,
+    ),
     # Exotic whitespace (LOW — visually similar to space but semantically different)
     0x1680: CharInfo("Ogham Space Mark", ThreatCategory.INVISIBLE_FORMAT, Severity.LOW),
     0x2000: CharInfo("En Quad", ThreatCategory.INVISIBLE_FORMAT, Severity.LOW),
@@ -180,7 +213,7 @@ def get_char_info(cp: int) -> CharInfo:
     if 0xE0020 <= cp <= 0xE007F:
         ascii_val = cp - 0xE0000
         return CharInfo(
-            f"Tag {chr(ascii_val)!r}" if 0x21 <= ascii_val <= 0x7E else f"Tag Space",
+            f"Tag {chr(ascii_val)!r}" if 0x21 <= ascii_val <= 0x7E else "Tag Space",
             ThreatCategory.TAG_CHARACTER,
             Severity.HIGH,
         )

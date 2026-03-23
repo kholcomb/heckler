@@ -198,10 +198,7 @@ class Scanner:
     def _is_excluded(self, filepath: Path) -> bool:
         """Check if a file matches any exclude pattern."""
         fp_str = str(filepath)
-        for pattern in self.exclude_patterns:
-            if _glob_match(fp_str, pattern):
-                return True
-        return False
+        return any(_glob_match(fp_str, pattern) for pattern in self.exclude_patterns)
 
     @staticmethod
     def _is_binary(filepath: Path) -> bool:

@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-import re
-
 from heckler.characters import (
-    CHAR_DB,
     DANGEROUS_UNICODE_RE,
-    CharInfo,
     Severity,
     ThreatCategory,
     get_char_info,

@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ..scanner import Finding
 
-from ..characters import Severity, ThreatCategory
 from .._version import __version__
+from ..characters import Severity, ThreatCategory
 
 _SEVERITY_TO_SARIF = {
     Severity.CRITICAL: "error",
@@ -94,7 +94,10 @@ def format_sarif(findings: list[Finding], **kwargs: object) -> str:
     # Collect which rules are actually used
     used_categories = {f.category for f in findings}
     rules = [_CATEGORY_RULES[cat] for cat in ThreatCategory if cat in used_categories]
-    rule_index = {cat: i for i, cat in enumerate(cat for cat in ThreatCategory if cat in used_categories)}
+    rule_index = {
+        cat: i
+        for i, cat in enumerate(cat for cat in ThreatCategory if cat in used_categories)
+    }
 
     results = []
     for f in findings:

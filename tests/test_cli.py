@@ -47,7 +47,7 @@ class TestCLI:
     def test_scan_deps_flag(self, tmp_path: Path) -> None:
         nm = tmp_path / "node_modules" / "pkg"
         nm.mkdir(parents=True)
-        (nm / "index.js").write_text(f'\uFE01', encoding='utf-8')
+        (nm / "index.js").write_text('\uFE01', encoding='utf-8')
         result = main(["--ci", "--scan-deps", str(tmp_path)])
         assert result == 1
 

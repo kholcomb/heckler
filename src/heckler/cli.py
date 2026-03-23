@@ -16,7 +16,10 @@ from .scanner import Scanner
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="heckler",
-        description="Detect dangerous invisible Unicode characters in source code and dependencies.",
+        description=(
+            "Detect dangerous invisible Unicode characters"
+            " in source code and dependencies."
+        ),
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
@@ -31,7 +34,10 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument(
         "--vet",
         metavar="PACKAGE",
-        help="Download and scan a package before installing (e.g., express@4.18.0, requests==2.31.0)",
+        help=(
+            "Download and scan a package before installing"
+            " (e.g., express@4.18.0, requests==2.31.0)"
+        ),
     )
 
     parser.add_argument(

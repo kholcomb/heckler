@@ -37,8 +37,7 @@ def check_tool_available(registry: str) -> None:
         if shutil.which('npm') is None:
             print("Error: npm not found. Install Node.js to vet npm packages.", file=sys.stderr)
             sys.exit(2)
-    elif registry == 'pypi':
-        if shutil.which('pip3') is None and shutil.which('pip') is None:
+    elif registry == 'pypi' and shutil.which('pip3') is None and shutil.which('pip') is None:
             print("Error: pip not found. Install Python pip to vet PyPI packages.", file=sys.stderr)
             sys.exit(2)
 
@@ -257,7 +256,10 @@ def vet_package(
                 sev = f.severity.value.upper()
                 counts[sev] = counts.get(sev, 0) + 1
             count_str = ', '.join(f"{v} {k}" for k, v in counts.items())
-            header = f"[VET] {spec} ({registry}) — {len(findings)} finding(s) ({count_str}). DO NOT INSTALL."
+            header = (
+                f"[VET] {spec} ({registry}) — {len(findings)} finding(s)"
+                f" ({count_str}). DO NOT INSTALL."
+            )
         else:
             header = f"[VET] {spec} ({registry}) — 0 findings. CLEAN."
         print(header)

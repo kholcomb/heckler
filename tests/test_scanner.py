@@ -30,38 +30,38 @@ class TestScanText:
 
     def test_inline_ignore(self) -> None:
         scanner = Scanner()
-        text = f'const x = "\uFE01"; // heckler-ignore\n'
+        text = 'const x = "\uFE01"; // heckler-ignore\n'
         findings = scanner.scan_text(text)
         assert findings == []
 
     def test_bom_at_start_allowed(self) -> None:
         scanner = Scanner(allow_bom=True)
-        text = f'\uFEFFconst x = 1;\n'
+        text = '\uFEFFconst x = 1;\n'
         findings = scanner.scan_text(text)
         assert findings == []
 
     def test_bom_at_start_disallowed(self) -> None:
         scanner = Scanner(allow_bom=False)
-        text = f'\uFEFFconst x = 1;\n'
+        text = '\uFEFFconst x = 1;\n'
         findings = scanner.scan_text(text)
         assert len(findings) == 1
 
     def test_bom_not_at_start(self) -> None:
         scanner = Scanner()
-        text = f'const x = "\uFEFF";\n'
+        text = 'const x = "\uFEFF";\n'
         findings = scanner.scan_text(text)
         assert len(findings) == 1
 
     def test_severity_threshold(self) -> None:
         scanner = Scanner(severity_threshold=Severity.HIGH)
         # LOW severity char (soft hyphen) should be filtered
-        text = f'const x = "test\u00ADword";\n'
+        text = 'const x = "test\u00ADword";\n'
         findings = scanner.scan_text(text)
         assert findings == []
 
     def test_severity_threshold_passes_high(self) -> None:
         scanner = Scanner(severity_threshold=Severity.HIGH)
-        text = f'const x = "\u202E";\n'  # RLO = CRITICAL
+        text = 'const x = "\u202E";\n'  # RLO = CRITICAL
         findings = scanner.scan_text(text)
         assert len(findings) == 1
 
@@ -75,7 +75,7 @@ class TestScanText:
 
     def test_multiple_findings_per_line(self) -> None:
         scanner = Scanner()
-        text = f'\u200B\u200C\u200D\n'
+        text = '\u200B\u200C\u200D\n'
         findings = scanner.scan_text(text)
         assert len(findings) == 3
 
@@ -113,7 +113,7 @@ class TestScanPath:
     def test_skip_dirs(self, tmp_path: Path) -> None:
         nm = tmp_path / "node_modules" / "evil"
         nm.mkdir(parents=True)
-        (nm / "index.js").write_text(f'\uFE01', encoding='utf-8')
+        (nm / "index.js").write_text('\uFE01', encoding='utf-8')
         # Also create a project file
         (tmp_path / "app.js").write_text('clean', encoding='utf-8')
 
@@ -124,7 +124,7 @@ class TestScanPath:
     def test_scan_deps(self, tmp_path: Path) -> None:
         nm = tmp_path / "node_modules" / "evil"
         nm.mkdir(parents=True)
-        (nm / "index.js").write_text(f'\uFE01', encoding='utf-8')
+        (nm / "index.js").write_text('\uFE01', encoding='utf-8')
 
         scanner = Scanner(scan_deps=True)
         findings = scanner.scan_path(tmp_path)
@@ -136,7 +136,7 @@ class TestScanPath:
     def test_scan_deps_scoped_package(self, tmp_path: Path) -> None:
         nm = tmp_path / "node_modules" / "@scope" / "pkg"
         nm.mkdir(parents=True)
-        (nm / "index.js").write_text(f'\u202E', encoding='utf-8')
+        (nm / "index.js").write_text('\u202E', encoding='utf-8')
 
         scanner = Scanner(scan_deps=True)
         findings = scanner.scan_path(tmp_path)
@@ -144,8 +144,8 @@ class TestScanPath:
         assert dep_findings[0].package == "@scope/pkg"
 
     def test_exclude_patterns(self, tmp_path: Path) -> None:
-        (tmp_path / "include.js").write_text(f'\uFE01', encoding='utf-8')
-        (tmp_path / "exclude.po").write_text(f'\uFE01', encoding='utf-8')
+        (tmp_path / "include.js").write_text('\uFE01', encoding='utf-8')
+        (tmp_path / "exclude.po").write_text('\uFE01', encoding='utf-8')
 
         scanner = Scanner(exclude_patterns=["*.po"])
         findings = scanner.scan_path(tmp_path)

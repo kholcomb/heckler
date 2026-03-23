@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -211,10 +210,8 @@ class TestResolvePackageDirIntegration:
             # We need a fake lockfile path whose parent contains our _test_node_modules
             # Rename temporarily to node_modules for the test
             real_nm = REPO_ROOT / "node_modules"
-            renamed = False
             if not real_nm.exists():
                 self.TEMP_NM.rename(real_nm)
-                renamed = True
                 result = resolve_package_dir("lodash", "npm", str(REPO_ROOT / "package-lock.json"))
                 assert result is not None
                 assert result.name == "lodash"
@@ -234,7 +231,8 @@ class TestResolvePackageDirIntegration:
             real_nm = REPO_ROOT / "node_modules"
             if not real_nm.exists():
                 self.TEMP_NM.rename(real_nm)
-                result = resolve_package_dir("@scope/pkg", "npm", str(REPO_ROOT / "package-lock.json"))
+                lockfile = str(REPO_ROOT / "package-lock.json")
+                result = resolve_package_dir("@scope/pkg", "npm", lockfile)
                 assert result is not None
                 assert result.name == "pkg"
                 real_nm.rename(self.TEMP_NM)
@@ -244,7 +242,8 @@ class TestResolvePackageDirIntegration:
             self._cleanup()
 
     def test_returns_none_for_missing_package(self) -> None:
-        result = resolve_package_dir("nonexistent-pkg-xyz", "npm", str(REPO_ROOT / "package-lock.json"))
+        lockfile = str(REPO_ROOT / "package-lock.json")
+        result = resolve_package_dir("nonexistent-pkg-xyz", "npm", lockfile)
         assert result is None
 
 
@@ -273,7 +272,7 @@ class TestScanChangedDepsIntegration:
             evil_dir = self.TEMP_NM / "evil-pkg"
             evil_dir.mkdir(parents=True)
             (evil_dir / "index.js").write_text(
-                f'const payload = `\uFE00\uFE01\uFE0F`;\n',
+                'const payload = `\uFE00\uFE01\uFE0F`;\n',
                 encoding="utf-8",
             )
 

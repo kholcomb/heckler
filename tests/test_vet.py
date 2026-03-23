@@ -10,9 +10,9 @@ from pathlib import Path
 import pytest
 
 from heckler.vet import (
-    _UnsafeArchiveError,
     _safe_tar_extract,
     _safe_zip_extract,
+    _UnsafeArchiveError,
     _validate_archive_member,
     detect_registry,
     extract_package,
@@ -137,11 +137,10 @@ class TestVetEndToEnd:
     def test_extract_and_scan_finds_glassworm(self, tmp_path: Path) -> None:
         """Build a fake npm package with Glassworm variation selectors,
         extract it, and verify the scanner finds them."""
-        from heckler.config import Config
         from heckler.scanner import Scanner
 
         # JS file with planted Glassworm variation selectors
-        evil_js = f'const payload = `\uFE00\uFE01\uFE0F`;\n'.encode("utf-8")
+        evil_js = 'const payload = `\uFE00\uFE01\uFE0F`;\n'.encode()
         clean_js = b'module.exports = {};\n'
 
         tgz = self._make_npm_tgz(tmp_path, {
@@ -182,7 +181,7 @@ class TestVetEndToEnd:
         """Build a fake .whl (zip) with a planted bidi attack, extract, scan."""
         from heckler.scanner import Scanner
 
-        evil_py = f'access = "\u202Eadmin"\n'.encode("utf-8")
+        evil_py = 'access = "\u202Eadmin"\n'.encode()
         whl_path = tmp_path / "evil_pkg-1.0.0-py3-none-any.whl"
         with zipfile.ZipFile(whl_path, "w") as zf:
             zf.writestr("evil_pkg/__init__.py", evil_py)
