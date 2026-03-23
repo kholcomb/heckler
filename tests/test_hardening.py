@@ -279,6 +279,26 @@ class TestDepScanExtensions:
         findings = scanner.scan_path(tmp_path)
         assert any(".java" in f.file for f in findings)
 
+    def test_scan_deps_includes_target_dir(self, tmp_path: Path) -> None:
+        """Rust target/ dir should be scanned when --scan-deps is set."""
+        target = tmp_path / "target" / "debug" / "build" / "some-crate"
+        target.mkdir(parents=True)
+        (target / "lib.rs").write_text('let x = "\uFE01";\n', encoding='utf-8')
+
+        scanner = Scanner(scan_deps=True)
+        findings = scanner.scan_path(tmp_path)
+        assert any("target" in f.file for f in findings)
+
+    def test_target_skipped_without_scan_deps(self, tmp_path: Path) -> None:
+        """target/ should still be skipped when --scan-deps is not set."""
+        target = tmp_path / "target" / "debug"
+        target.mkdir(parents=True)
+        (target / "lib.rs").write_text('let x = "\uFE01";\n', encoding='utf-8')
+
+        scanner = Scanner(scan_deps=False)
+        findings = scanner.scan_path(tmp_path)
+        assert not any("target" in f.file for f in findings)
+
 
 # ---------------------------------------------------------------------------
 # 9. Well-known extensionless filenames

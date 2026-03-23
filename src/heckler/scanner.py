@@ -271,8 +271,13 @@ class Scanner:
 
     def _effective_skip_dirs(self) -> frozenset[str]:
         if self.scan_deps:
-            # Remove vendor dirs from skip list when scanning deps
-            dep_dirs = {'node_modules', 'vendor', 'site-packages', '.venv', 'venv'}
+            # Remove dependency dirs from skip list when scanning deps
+            dep_dirs = {
+                'node_modules', 'vendor', 'site-packages',
+                '.venv', 'venv',
+                'target',  # Rust/Cargo build + deps
+                'build', 'dist',  # Common build output dirs nested in deps
+            }
             return self.skip_dirs - dep_dirs
         return self.skip_dirs
 
@@ -281,7 +286,7 @@ class Scanner:
     ) -> frozenset[str] | None:
         """Use restricted extensions inside dependency directories."""
         parts = set(dirpath.parts)
-        dep_markers = {'node_modules', 'vendor', 'site-packages'}
+        dep_markers = {'node_modules', 'vendor', 'site-packages', 'target'}
         if parts & dep_markers:
             return DEP_SCAN_EXTENSIONS
         return default_exts
