@@ -1,0 +1,4 @@
+severity: low
+allow_bom: true
+allowlist:
+  - 'testdata/*'
