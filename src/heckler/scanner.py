@@ -131,10 +131,34 @@ DEFAULT_SKIP_DIRS = frozenset({
     'site-packages', '.tox', '.eggs', '.mypy_cache', '.ruff_cache',
 })
 
-# Restricted set for dependency scanning (executable files only)
+# Restricted set for dependency scanning — source files that could execute
+# or be imported as code. Broader than just "executable" to cover compiled
+# language ecosystems (Rust, Go, Java, etc.) where deps contain source.
 DEP_SCAN_EXTENSIONS = frozenset({
-    '.js', '.cjs', '.mjs', '.ts', '.jsx', '.tsx', '.py', '.sh', '.bash',
-    '.rb', '.php', '.go', '.pl',
+    '.js', '.cjs', '.mjs', '.ts', '.jsx', '.tsx',  # JavaScript/TypeScript
+    '.py', '.pyi',                                   # Python
+    '.sh', '.bash',                                  # Shell
+    '.rb',                                            # Ruby
+    '.php',                                           # PHP
+    '.go',                                            # Go
+    '.pl',                                            # Perl
+    '.rs',                                            # Rust
+    '.java', '.kt', '.scala', '.groovy',             # JVM
+    '.cs',                                            # C# / .NET
+    '.swift',                                         # Swift
+    '.c', '.cpp', '.h', '.hpp',                      # C/C++
+    '.lua',                                           # Lua
+    '.dart',                                          # Dart
+    '.ex', '.exs',                                    # Elixir
+    '.erl', '.hrl',                                   # Erlang
+    '.zig',                                           # Zig
+    '.nim',                                           # Nim
+    '.ml', '.mli',                                    # OCaml
+    '.hs',                                            # Haskell
+    '.clj', '.cljs', '.cljc',                        # Clojure
+    '.jl',                                            # Julia
+    '.cr',                                            # Crystal
+    '.m', '.mm',                                      # Objective-C
 })
 
 IGNORE_COMMENT = "heckler-ignore"

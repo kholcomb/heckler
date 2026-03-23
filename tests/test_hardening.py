@@ -18,7 +18,7 @@ from heckler.characters import DANGEROUS_UNICODE_RE, Severity, ThreatCategory, g
 from heckler.cli import main
 from heckler.config import load_config
 from heckler.lockfile import parse_changed_packages
-from heckler.scanner import KNOWN_FILENAMES, Scanner
+from heckler.scanner import DEP_SCAN_EXTENSIONS, KNOWN_FILENAMES, Scanner
 from heckler.vet import _safe_zip_extract, extract_package
 
 
@@ -249,7 +249,39 @@ class TestExtendedExtensions:
 
 
 # ---------------------------------------------------------------------------
-# 8. Well-known extensionless filenames
+# 8. DEP_SCAN_EXTENSIONS covers multi-language ecosystems
+# ---------------------------------------------------------------------------
+
+class TestDepScanExtensions:
+    @pytest.mark.parametrize("ext", [
+        ".rs", ".go", ".java", ".kt", ".scala", ".cs", ".swift",
+        ".c", ".cpp", ".h", ".hpp", ".lua", ".dart", ".ex", ".exs",
+        ".erl", ".zig", ".nim", ".ml", ".hs", ".clj", ".jl", ".cr",
+    ])
+    def test_dep_extensions_include_multi_lang(self, ext: str) -> None:
+        assert ext in DEP_SCAN_EXTENSIONS, f"{ext} missing from DEP_SCAN_EXTENSIONS"
+
+    def test_scan_deps_finds_rust_file(self, tmp_path: Path) -> None:
+        nm = tmp_path / "vendor" / "some-crate"
+        nm.mkdir(parents=True)
+        (nm / "lib.rs").write_text('let x = "\uFE01";\n', encoding='utf-8')
+
+        scanner = Scanner(scan_deps=True)
+        findings = scanner.scan_path(tmp_path)
+        assert any(".rs" in f.file for f in findings)
+
+    def test_scan_deps_finds_java_file(self, tmp_path: Path) -> None:
+        nm = tmp_path / "vendor" / "some-lib"
+        nm.mkdir(parents=True)
+        (nm / "Main.java").write_text('String x = "\uFE01";\n', encoding='utf-8')
+
+        scanner = Scanner(scan_deps=True)
+        findings = scanner.scan_path(tmp_path)
+        assert any(".java" in f.file for f in findings)
+
+
+# ---------------------------------------------------------------------------
+# 9. Well-known extensionless filenames
 # ---------------------------------------------------------------------------
 
 class TestKnownFilenames:
