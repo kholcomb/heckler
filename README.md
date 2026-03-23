@@ -170,7 +170,7 @@ Lockfiles for Cargo, Go, Ruby, and Composer are detected but parsers are not yet
 Use as a composite action:
 
 ```yaml
-- uses: heckler/heckler@v1
+- uses: kholcomb/heckler@v1
   with:
     scan-deps: true
     format: sarif
@@ -190,7 +190,7 @@ Add to `.pre-commit-config.yaml`:
 
 ```yaml
 repos:
-  - repo: https://github.com/heckler/heckler
+  - repo: https://github.com/kholcomb/heckler
     rev: v0.1.0
     hooks:
       - id: heckler          # Scan source files

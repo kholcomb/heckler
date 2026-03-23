@@ -136,7 +136,7 @@ def format_sarif(findings: list[Finding], **kwargs: object) -> str:
                     "driver": {
                         "name": "heckler",
                         "version": __version__,
-                        "informationUri": "https://github.com/heckler/heckler",
+                        "informationUri": "https://github.com/kholcomb/heckler",
                         "rules": rules,
                     }
                 },
