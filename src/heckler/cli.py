@@ -23,15 +23,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
-    # Mutually exclusive: scan paths vs vet a package
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
+    parser.add_argument(
         "paths",
         nargs="*",
         default=None,
         help="Files or directories to scan (default: current directory)",
     )
-    group.add_argument(
+    parser.add_argument(
         "--vet",
         metavar="PACKAGE",
         help=(
@@ -114,6 +112,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # Handle --vet mode
     if args.vet:
+        if args.paths:
+            parser.error("argument paths: not allowed with argument --vet")
         return _run_vet(args, config)
 
     # Handle --diff-only mode
