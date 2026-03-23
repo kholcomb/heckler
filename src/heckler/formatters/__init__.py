@@ -18,4 +18,6 @@ def get_formatter(name: str) -> Callable[..., str]:
         "json": format_json,
         "sarif": format_sarif,
     }
+    if name not in formatters:
+        raise ValueError(f"Unknown output format: {name!r}. Choose from: {', '.join(formatters)}")
     return formatters[name]

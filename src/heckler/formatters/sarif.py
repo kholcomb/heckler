@@ -111,7 +111,10 @@ def format_sarif(findings: list[Finding], **kwargs: object) -> str:
             "locations": [
                 {
                     "physicalLocation": {
-                        "artifactLocation": {"uri": f.file},
+                        "artifactLocation": {
+                            "uri": f.file.replace("\\", "/"),
+                            "uriBaseId": "%SRCROOT%",
+                        },
                         "region": {
                             "startLine": f.line,
                             "startColumn": f.column,

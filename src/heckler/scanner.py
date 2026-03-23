@@ -84,7 +84,7 @@ _BINARY_CHECK_SIZE = 8192
 @dataclass
 class Scanner:
     skip_dirs: frozenset[str] = field(default_factory=lambda: DEFAULT_SKIP_DIRS)
-    text_extensions: frozenset[str] = field(default_factory=lambda: DEFAULT_TEXT_EXTENSIONS)
+    text_extensions: frozenset[str] | None = field(default_factory=lambda: DEFAULT_TEXT_EXTENSIONS)
     severity_threshold: Severity = Severity.LOW
     exclude_patterns: list[str] = field(default_factory=list)
     allow_bom: bool = True
@@ -148,7 +148,7 @@ class Scanner:
             exts = self._extensions_for_path(dp, effective_exts)
             for fname in filenames:
                 fpath = dp / fname
-                if fpath.suffix.lower() in exts and not self._is_excluded(fpath):
+                if (exts is None or fpath.suffix.lower() in exts) and not self._is_excluded(fpath):
                     all_findings.extend(self.scan_file(fpath))
         return all_findings
 
@@ -166,7 +166,9 @@ class Scanner:
             return self.skip_dirs - dep_dirs
         return self.skip_dirs
 
-    def _extensions_for_path(self, dirpath: Path, default_exts: frozenset[str]) -> frozenset[str]:
+    def _extensions_for_path(
+        self, dirpath: Path, default_exts: frozenset[str] | None,
+    ) -> frozenset[str] | None:
         """Use restricted extensions inside dependency directories."""
         parts = set(dirpath.parts)
         dep_markers = {'node_modules', 'vendor', 'site-packages'}
@@ -212,7 +214,7 @@ class Scanner:
 
 
 def _glob_match(path: str, pattern: str) -> bool:
-    """Simple glob matching for exclude patterns."""
-    from fnmatch import fnmatch
-    # Match against full path and basename
-    return fnmatch(path, pattern) or fnmatch(os.path.basename(path), pattern)
+    """Glob matching for exclude patterns, supporting ** patterns."""
+    from pathlib import PurePath
+    # PurePath.match handles ** (recursive) patterns correctly
+    return PurePath(path).match(pattern)

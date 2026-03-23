@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import subprocess
 import sys
@@ -92,12 +93,12 @@ def extract_package(archive_path: Path, tmpdir: str) -> Path:
 
     name = archive_path.name.lower()
     try:
-        if name.endswith(('.tgz', '.tar.gz', '.tar.bz2')) or (
-            not name.endswith(('.whl', '.zip'))
-        ):
+        if name.endswith(('.tgz', '.tar.gz', '.tar.bz2', '.tar')):
             _safe_tar_extract(archive_path, extract_dir, resolved_root)
-        else:
+        elif name.endswith(('.whl', '.zip')):
             _safe_zip_extract(archive_path, extract_dir, resolved_root)
+        else:
+            raise _UnsafeArchiveError(f"Unsupported archive type: {archive_path.name}")
     except (tarfile.TarError, zipfile.BadZipFile, _UnsafeArchiveError) as e:
         print(f"Error: Failed to extract package archive: {e}", file=sys.stderr)
         sys.exit(2)
@@ -223,7 +224,7 @@ def vet_package(
 
     check_tool_available(registry)
 
-    with tempfile.TemporaryDirectory(prefix='glassworm-vet-') as tmpdir:
+    with tempfile.TemporaryDirectory(prefix='heckler-vet-') as tmpdir:
         archive = download_package(spec, registry, tmpdir)
         extract_dir = extract_package(archive, tmpdir)
 
@@ -239,8 +240,8 @@ def vet_package(
 
         # Rewrite file paths to be relative to package root
         for f in findings:
-            rel = f.file.replace(str(extract_dir), '').lstrip('/')
-            f.file = rel
+            with contextlib.suppress(ValueError):
+                f.file = str(Path(f.file).relative_to(extract_dir))
             f.source = "dependency"
             f.package = spec
 

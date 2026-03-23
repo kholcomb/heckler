@@ -109,6 +109,8 @@ def main(argv: list[str] | None = None) -> int:
     # CLI overrides
     if args.severity:
         config.severity_threshold = Severity(args.severity)
+    if args.all_text:
+        config.text_extensions = None  # type: ignore[assignment]
 
     # Handle --vet mode
     if args.vet:

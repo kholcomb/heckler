@@ -29,5 +29,9 @@ htmlcov/
 .vscode/
 .idea/
 
+# Heckler CI artifacts
+.heckler-dep-scan-result
+heckler-results.sarif
+
 # Claude
 .claude/

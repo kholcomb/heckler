@@ -77,10 +77,8 @@ def _parse_npm_lockfile_diff(diff_text: str) -> list[tuple[str, str]]:
         if '"node_modules/' in line and '": {' in line:
             path = line.split('"node_modules/')[1].split('"')[0]
             packages.append((path, ''))
-        # Match "packages" key entries in lockfileVersion 3
-        elif '"packages"' not in line and '"version":' in line:
-            # This is a version line inside a changed package
-            pass
+        # Note: npm version lines inside package entries are not extracted
+        # since the package name is already captured from the path key above
     # Deduplicate
     return list(dict.fromkeys(packages))
 
@@ -97,9 +95,11 @@ def _parse_pip_diff(diff_text: str) -> list[tuple[str, str]]:
         # requirements.txt: package==version
         if '==' in content:
             name, _, version = content.partition('==')
-            packages.append((name.strip().lower(), version.strip()))
-        elif '>=' in content or '<=' in content:
-            name = content.split('>')[0].split('<')[0].strip().lower()
+            name = name.split('[')[0].strip().lower()
+            packages.append((name, version.strip()))
+        elif '>=' in content or '<=' in content or '!=' in content or '~=' in content:
+            name = content.split('>')[0].split('<')[0].split('!')[0].split('~')[0]
+            name = name.split('[')[0].strip().lower()
             packages.append((name, ''))
         # poetry.lock: name = "package-name"
         elif content.startswith('name = '):
@@ -117,15 +117,15 @@ def _parse_yarn_diff(diff_text: str) -> list[tuple[str, str]]:
         content = line[1:].strip()
         # yarn.lock entries: "package@^version", "package@~version":
         if content.endswith(':') and '@' in content:
-            # Strip trailing colon and quotes
-            entry = content.rstrip(':').strip('"').strip("'")
+            # Handle multi-range entries: "lodash@^4.0.0", "lodash@^4.17.0":
+            first_spec = content.rstrip(':').split(',')[0].strip().strip('"').strip("'")
             # Get package name (before last @)
-            if entry.startswith('@'):
+            if first_spec.startswith('@'):
                 # Scoped: @scope/name@version
-                rest = entry[1:]
-                name = '@' + rest.rsplit('@', 1)[0] if '@' in rest else entry
+                rest = first_spec[1:]
+                name = '@' + rest.rsplit('@', 1)[0] if '@' in rest else first_spec
             else:
-                name = entry.rsplit('@', 1)[0]
+                name = first_spec.rsplit('@', 1)[0]
             packages.append((name, ''))
     return list(dict.fromkeys(packages))
 
