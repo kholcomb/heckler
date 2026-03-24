@@ -145,19 +145,24 @@ def _parse_pnpm_diff(diff_text: str) -> list[tuple[str, str]]:
         if not line.startswith('+') or line.startswith('+++'):
             continue
         content = line[1:].strip()
-        # pnpm format: /@scope/name@version: or /name@version:
-        if content.startswith('/') and '@' in content:
-            entry = content.lstrip('/').rstrip(':')
-            if entry.startswith('@'):
-                # Scoped
-                rest = entry[1:]
-                name = (
-                    '@' + rest.rsplit('@', 1)[0]
-                    if '@' in rest.split('/', 1)[-1]
-                    else entry
-                )
-            else:
-                name = entry.rsplit('@', 1)[0]
+        # pnpm format: /@scope/name@version: or /name@version: or /name:
+        if not content.startswith('/'):
+            continue
+        entry = content.lstrip('/').rstrip(':').strip()
+        if not entry:
+            continue
+        if entry.startswith('@'):
+            # Scoped: @scope/name@version or @scope/name
+            rest = entry[1:]
+            after_slash = rest.split('/', 1)[-1] if '/' in rest else rest
+            name = '@' + rest.rsplit('@', 1)[0] if '@' in after_slash else entry
+        elif '@' in entry:
+            # Unscoped with version: name@version
+            name = entry.rsplit('@', 1)[0]
+        else:
+            # Unscoped without version: name
+            name = entry
+        if name:
             packages.append((name, ''))
     return list(dict.fromkeys(packages))
 

@@ -29,6 +29,14 @@ inputs:
     description: 'Upload SARIF results to GitHub Security tab'
     required: false
     default: 'false'
+  create-issue:
+    description: 'Automatically create a GitHub issue when findings are detected'
+    required: false
+    default: 'false'
+  issue-label:
+    description: 'Label to apply to auto-created issues (requires create-issue: true)'
+    required: false
+    default: ''
 
 runs:
   using: 'composite'
@@ -49,26 +57,32 @@ runs:
         INPUT_SCAN_DEPS: ${{ inputs.scan-deps }}
         INPUT_CONFIG: ${{ inputs.config }}
         INPUT_UPLOAD_SARIF: ${{ inputs.upload-sarif }}
+        INPUT_CREATE_ISSUE: ${{ inputs.create-issue }}
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_PATH: ${{ inputs.path }}
       run: |
-        ARGS="--ci --severity $INPUT_SEVERITY"
+        ARGS=(--ci --severity "$INPUT_SEVERITY")
 
         if [ "$INPUT_SCAN_DEPS" = "true" ]; then
-          ARGS="$ARGS --scan-deps"
+          ARGS+=(--scan-deps)
         fi
 
         if [ -n "$INPUT_CONFIG" ]; then
-          ARGS="$ARGS --config $INPUT_CONFIG"
+          ARGS+=(--config "$INPUT_CONFIG")
+        fi
+
+        # Always capture JSON output when create-issue is enabled
+        if [ "$INPUT_CREATE_ISSUE" = "true" ]; then
+          heckler "${ARGS[@]}" --format json "$INPUT_PATH" > heckler-results.json || true
         fi
 
         if [ "$INPUT_UPLOAD_SARIF" = "true" ]; then
-          heckler $ARGS --format sarif "$INPUT_PATH" > heckler-results.sarif || true
-          heckler $ARGS "$INPUT_PATH"
+          heckler "${ARGS[@]}" --format sarif "$INPUT_PATH" > heckler-results.sarif || true
+          heckler "${ARGS[@]}" "$INPUT_PATH"
         elif [ "$INPUT_FORMAT" = "sarif" ]; then
-          heckler $ARGS --format sarif "$INPUT_PATH"
+          heckler "${ARGS[@]}" --format sarif "$INPUT_PATH"
         else
-          heckler $ARGS --format "$INPUT_FORMAT" "$INPUT_PATH"
+          heckler "${ARGS[@]}" --format "$INPUT_FORMAT" "$INPUT_PATH"
         fi
 
     - name: Upload SARIF
@@ -77,3 +91,84 @@ runs:
       with:
         sarif_file: heckler-results.sarif
         category: heckler
+
+    - name: Create issue for findings
+      if: inputs.create-issue == 'true' && always()
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_SHA: ${{ github.sha }}
+        GITHUB_RUN_ID: ${{ github.run_id }}
+        GITHUB_SERVER_URL: ${{ github.server_url }}
+        INPUT_ISSUE_LABEL: ${{ inputs.issue-label }}
+      run: |
+        if [ ! -f heckler-results.json ]; then
+          echo "No results file found, skipping issue creation."
+          exit 0
+        fi
+
+        COUNT=$(python3 -c "import json; print(len(json.load(open('heckler-results.json'))))")
+        if [ "$COUNT" = "0" ]; then
+          echo "No findings, skipping issue creation."
+          exit 0
+        fi
+
+        SHORT_SHA="${GITHUB_SHA:0:7}"
+        RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+        # Build the issue body from JSON findings
+        BODY=$(python3 <<'PYEOF'
+        import json, sys
+
+        def sanitize_md(s):
+            """Escape characters that break markdown table cells."""
+            return s.replace('|', '\\|').replace('`', '\\`').replace('\n', ' ')
+
+        with open("heckler-results.json") as f:
+            findings = json.load(f)
+
+        severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+        findings.sort(key=lambda f: (severity_order.get(f["severity"], 99), f["file"], f["line"]))
+
+        lines = []
+        lines.append(f"Heckler detected **{len(findings)}** dangerous invisible Unicode character(s).\n")
+        lines.append("| Severity | File | Line | Codepoint | Name | Category |")
+        lines.append("|----------|------|------|-----------|------|----------|")
+
+        for f in findings:
+            sev = f["severity"]
+            badge = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵"}.get(sev, "⚪")
+            safe_file = sanitize_md(f["file"])
+            safe_name = sanitize_md(f["name"])
+            safe_cat = sanitize_md(f["category"])
+            lines.append(
+                f"| {badge} {sev} | `{safe_file}` | {f['line']}:{f['column']} "
+                f"| `{f['codepoint']}` | {safe_name} | {safe_cat} |"
+            )
+
+        print("\n".join(lines))
+        PYEOF
+        )
+
+        TITLE="Heckler: ${COUNT} dangerous Unicode character(s) detected (${SHORT_SHA})"
+
+        ISSUE_BODY="## Heckler Scan Results
+
+        ${BODY}
+
+        ---
+        **Commit:** \`${GITHUB_SHA}\`
+        **Workflow run:** [View details](${RUN_URL})
+
+        > This issue was automatically created by [HecklerDetection](https://github.com/marketplace/actions/hecklerdetection)."
+
+        # De-indent the heredoc-style body
+        ISSUE_BODY=$(echo "$ISSUE_BODY" | sed 's/^        //')
+
+        GH_ARGS=(--repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$ISSUE_BODY")
+        if [ -n "$INPUT_ISSUE_LABEL" ]; then
+          GH_ARGS+=(--label "$INPUT_ISSUE_LABEL")
+        fi
+
+        gh issue create "${GH_ARGS[@]}"

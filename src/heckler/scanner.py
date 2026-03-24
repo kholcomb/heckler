@@ -199,6 +199,10 @@ def _parse_suppressed_codepoints(directive_match: re.Match[str]) -> frozenset[in
 
 _BINARY_CHECK_SIZE = 8192
 
+# Maximum file size to scan (50 MB). Files larger than this are skipped to
+# prevent memory exhaustion from adversarially large inputs.
+_MAX_SCAN_FILE_SIZE = 50 * 1024 * 1024
+
 # BOM signatures ordered longest-first so UTF-32 is checked before UTF-16.
 _BOM_TABLE: list[tuple[bytes, str]] = [
     (b'\xff\xfe\x00\x00', 'utf-32-le'),
@@ -285,6 +289,9 @@ class Scanner:
     def scan_file(self, filepath: Path) -> list[Finding]:
         """Read a file and scan its contents."""
         try:
+            size = filepath.stat().st_size
+            if size > _MAX_SCAN_FILE_SIZE:
+                return []
             raw = filepath.read_bytes()
         except (OSError, PermissionError):
             return []
@@ -326,18 +333,19 @@ class Scanner:
         effective_skip = self._effective_skip_dirs()
         effective_exts = self.text_extensions
 
-        for dirpath, dirnames, filenames in os.walk(root):
-            # Filter directories in-place
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            # Filter directories in-place — skip symlinks and excluded dirs
             dirnames[:] = [
                 d for d in dirnames
                 if d not in effective_skip
+                and not os.path.islink(os.path.join(dirpath, d))
             ]
             dp = Path(dirpath)
             # Use restricted extensions for dependency directories
             exts = self._extensions_for_path(dp, effective_exts)
             for fname in filenames:
                 fpath = dp / fname
-                if self._is_excluded(fpath):
+                if os.path.islink(fpath) or self._is_excluded(fpath):
                     continue
                 has_ext = bool(fpath.suffix)
                 if exts is None:

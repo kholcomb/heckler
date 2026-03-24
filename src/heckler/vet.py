@@ -10,6 +10,7 @@ managers.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import sys
 import tarfile
@@ -106,6 +107,23 @@ def _download_file(url: str, dest: Path) -> None:
         dest.write_bytes(resp.read())
 
 
+def _verify_checksum(path: Path, algorithm: str, expected: str, label: str) -> None:
+    """Verify a downloaded file's checksum. Exits on mismatch."""
+    h = hashlib.new(algorithm)
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(8192), b''):
+            h.update(chunk)
+    actual = h.hexdigest()
+    if actual != expected:
+        print(
+            f"Error: Checksum mismatch for {label}\n"
+            f"  Expected ({algorithm}): {expected}\n"
+            f"  Got:                    {actual}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
 # ---------------------------------------------------------------------------
 # npm
 # ---------------------------------------------------------------------------
@@ -133,6 +151,9 @@ def _download_npm(name: str, version: str | None, tmpdir: str) -> Path:
         print(f'Error: No tarball URL found for "{name}".', file=sys.stderr)
         sys.exit(2)
 
+    # Extract expected checksum from registry metadata
+    expected_shasum = dist.get("shasum") if isinstance(dist, dict) else None
+
     filename: str = tarball_url.rsplit('/', 1)[-1]
     dest: Path = Path(tmpdir) / filename
 
@@ -141,6 +162,9 @@ def _download_npm(name: str, version: str | None, tmpdir: str) -> Path:
     except (urllib.error.URLError, OSError) as e:
         print(f"Error: Failed to download npm package: {e}", file=sys.stderr)
         sys.exit(2)
+
+    if isinstance(expected_shasum, str):
+        _verify_checksum(dest, "sha1", expected_shasum, f"{name} (npm)")
 
     return dest
 
@@ -192,12 +216,19 @@ def _download_pypi(name: str, version: str | None, tmpdir: str) -> Path:
         print(f'Error: Malformed download metadata for "{name}".', file=sys.stderr)
         sys.exit(2)
 
+    # Extract expected SHA-256 from registry metadata
+    digests = chosen.get("digests")
+    expected_sha256 = digests.get("sha256") if isinstance(digests, dict) else None
+
     dest = Path(tmpdir) / filename
     try:
         _download_file(download_url, dest)
     except (urllib.error.URLError, OSError) as e:
         print(f"Error: Failed to download PyPI package: {e}", file=sys.stderr)
         sys.exit(2)
+
+    if isinstance(expected_sha256, str):
+        _verify_checksum(dest, "sha256", expected_sha256, f"{name} (pypi)")
 
     return dest
 

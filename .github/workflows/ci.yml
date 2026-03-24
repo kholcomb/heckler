@@ -42,3 +42,12 @@ jobs:
           python-version: '3.12'
       - run: pip install -e ".[dev]"
       - run: mypy src/
+
+  refract:
+    name: Anti-pattern scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+      - uses: kholcomb/refract@v1
+        with:
+          languages: python

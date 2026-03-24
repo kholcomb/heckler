@@ -10,6 +10,11 @@ if TYPE_CHECKING:
 
 from ..characters import Severity
 
+
+def _sanitize_annotation_value(value: str) -> str:
+    """Escape characters that have special meaning in GitHub Actions annotations."""
+    return value.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A').replace(',', '%2C')
+
 _SEVERITY_COLORS = {
     Severity.CRITICAL: "\033[91m",  # Red
     Severity.HIGH: "\033[93m",      # Yellow
@@ -86,9 +91,11 @@ def format_text(findings: list[Finding], *, color: bool = True, quiet: bool = Fa
             lines.append(line_str)
 
             if in_gha:
+                safe_file = _sanitize_annotation_value(f.file)
+                safe_name = _sanitize_annotation_value(f.char_name)
                 lines.append(
-                    f"::error file={f.file},line={f.line},col={f.column}"
-                    f"::{sev_label}: {f.codepoint_hex} ({f.char_name}){tag}"
+                    f"::error file={safe_file},line={f.line},col={f.column}"
+                    f"::{sev_label}: {f.codepoint_hex} ({safe_name}){tag}"
                 )
 
         if not quiet:
