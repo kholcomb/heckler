@@ -100,11 +100,28 @@ def _fetch_json(url: str) -> dict[str, object]:
         raise
 
 
+_MAX_DOWNLOAD_SIZE = 500 * 1024 * 1024  # 500 MB — matches total extraction limit
+
+
 def _download_file(url: str, dest: Path) -> None:
-    """Stream a URL to a local file."""
+    """Stream a URL to a local file with a size cap."""
     req = urllib.request.Request(url)
     with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310
-        dest.write_bytes(resp.read())
+        total = 0
+        with open(dest, 'wb') as f:
+            while True:
+                chunk = resp.read(8192)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > _MAX_DOWNLOAD_SIZE:
+                    dest.unlink(missing_ok=True)
+                    print(
+                        f"Error: Download exceeds {_MAX_DOWNLOAD_SIZE // (1024 * 1024)} MB limit.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(2)
+                f.write(chunk)
 
 
 def _verify_checksum(path: Path, algorithm: str, expected: str, label: str) -> None:
