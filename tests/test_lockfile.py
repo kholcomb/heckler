@@ -371,27 +371,27 @@ class TestNpmVersionBumps:
             entry["resolved"] = "https://registry.npmjs.org/express/-/express-4.18.2.tgz"
             entry["integrity"] = "sha512-FFFF"
 
-        assert parse_changed_packages(_npm_diff(bump), "npm") == [("express", "")]
+        assert parse_changed_packages(_npm_diff(bump), "npm") == [("express", "4.18.2")]
 
     def test_change_deep_inside_a_block(self) -> None:
         def bump(lock: dict) -> None:  # type: ignore[type-arg]
             lock["packages"]["node_modules/express"]["dependencies"]["accepts"] = "~1.3.9"
 
-        assert parse_changed_packages(_npm_diff(bump), "npm") == [("express", "")]
+        assert parse_changed_packages(_npm_diff(bump), "npm") == [("express", "4.18.0")]
 
     def test_bump_of_nested_package(self) -> None:
         def bump(lock: dict) -> None:  # type: ignore[type-arg]
             lock["packages"]["node_modules/express/node_modules/debug"]["version"] = "2.6.10"
 
         assert parse_changed_packages(_npm_diff(bump), "npm") == [
-            ("express/node_modules/debug", ""),
+            ("express/node_modules/debug", "2.6.10"),
         ]
 
     def test_new_package_reports_only_itself(self) -> None:
         def add(lock: dict) -> None:  # type: ignore[type-arg]
             lock["packages"]["node_modules/zebra"] = {"version": "1.0.0"}
 
-        assert parse_changed_packages(_npm_diff(add), "npm") == [("zebra", "")]
+        assert parse_changed_packages(_npm_diff(add), "npm") == [("zebra", "1.0.0")]
 
     def test_root_entry_change_is_not_a_package(self) -> None:
         def edit(lock: dict) -> None:  # type: ignore[type-arg]
@@ -457,20 +457,20 @@ class TestYarnVersionBumps:
         # The range in the header also reads 4.17.20; keep the header unchanged.
         new = new.replace("lodash@^4.17.21:", "lodash@^4.17.20:")
         assert parse_changed_packages(_full_diff(_YARN_CLASSIC, new), "yarn") == [
-            ("lodash", ""),
+            ("lodash", "4.17.21"),
         ]
 
     def test_classic_scoped_bump(self) -> None:
         new = _YARN_CLASSIC.replace('version "7.24.0"', 'version "7.24.1"')
         assert parse_changed_packages(_full_diff(_YARN_CLASSIC, new), "yarn") == [
-            ("@babel/core", ""),
+            ("@babel/core", "7.24.1"),
         ]
 
     def test_berry_bump(self) -> None:
         new = _YARN_BERRY.replace("version: 4.17.20", "version: 4.17.21")
         new = new.replace("lodash@npm:4.17.20", "lodash@npm:4.17.21")
         assert parse_changed_packages(_full_diff(_YARN_BERRY, new), "yarn") == [
-            ("lodash", ""),
+            ("lodash", "4.17.21"),
         ]
 
     def test_berry_workspace_and_metadata_are_not_packages(self) -> None:
@@ -481,7 +481,7 @@ class TestYarnVersionBumps:
     def test_alias_resolves_to_installed_name(self) -> None:
         new = _YARN_CLASSIC + '\n"foo@npm:bar@^1.0.0":\n  version "1.0.0"\n'
         assert parse_changed_packages(_full_diff(_YARN_CLASSIC, new), "yarn") == [
-            ("foo", ""),
+            ("foo", "1.0.0"),
         ]
 
 
@@ -523,13 +523,13 @@ class TestPoetryVersionBumps:
     def test_bump(self) -> None:
         new = _POETRY_LOCK.replace("2.31.0", "2.32.0").replace("bbbb", "dddd")
         assert parse_changed_packages(_full_diff(_POETRY_LOCK, new), "poetry") == [
-            ("requests", ""),
+            ("requests", "2.32.0"),
         ]
 
     def test_sub_table_change_belongs_to_its_package(self) -> None:
         new = _POETRY_LOCK.replace('certifi = ">=2017.4.17"', 'certifi = ">=2023.5.7"')
         assert parse_changed_packages(_full_diff(_POETRY_LOCK, new), "poetry") == [
-            ("requests", ""),
+            ("requests", "2.31.0"),
         ]
 
     def test_metadata_change_is_not_a_package(self) -> None:
@@ -542,8 +542,190 @@ class TestPoetryVersionBumps:
             '[[package]]\nname = "idna"\nversion = "3.7"\n\n[metadata]',
         )
         assert parse_changed_packages(_full_diff(_POETRY_LOCK, new), "poetry") == [
-            ("idna", ""),
+            ("idna", "3.7"),
         ]
+
+
+class TestNpmEntryKinds:
+    def test_workspace_link_is_not_a_dependency(self) -> None:
+        def add(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["packages"]["node_modules/app"] = {"resolved": "packages/app", "link": True}
+
+        assert parse_changed_packages(_npm_diff(add), "npm") == []
+
+    def test_dependency_named_version_is_not_the_version(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            entry = lock["packages"]["node_modules/express"]
+            entry["dependencies"]["version"] = "^9.9.9"
+
+        assert parse_changed_packages(_npm_diff(edit), "npm") == [("express", "4.18.0")]
+
+
+class TestRequirementsParsing:
+    def _added(self, *lines: str) -> list[tuple[str, str]]:
+        diff = "--- a/requirements.txt\n+++ b/requirements.txt\n@@ -1 +1,9 @@\n"
+        diff += "".join(f"+{line}\n" for line in lines)
+        return parse_changed_packages(diff, "pip")
+
+    def test_exact_pin(self) -> None:
+        assert self._added("requests==2.32.0") == [("requests", "2.32.0")]
+
+    def test_pin_with_hashes_markers_and_comments(self) -> None:
+        assert self._added(
+            "requests==2.32.0 \\",
+            "    --hash=sha256:aaaa",
+            'idna==3.7 ; python_version >= "3.8"',
+            "Certifi==2024.2.2  # ca bundle",
+            "urllib3[socks]==2.2.1",
+        ) == [
+            ("requests", "2.32.0"),
+            ("idna", "3.7"),
+            ("certifi", "2024.2.2"),
+            ("urllib3", "2.2.1"),
+        ]
+
+    def test_range_has_no_version_to_verify(self) -> None:
+        assert self._added("django>=4.2", "flask~=3.0") == [("django", ""), ("flask", "")]
+
+    def test_options_and_comments_are_not_packages(self) -> None:
+        assert self._added("# pinned==1.0", "-r base.txt", "--index-url https://x/simple") == []
+
+
+_PNPM_V9 = """\
+lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      lodash:
+        specifier: ^4.17.20
+        version: 4.17.20
+
+packages:
+
+  '@scope/pkg@1.0.0':
+    resolution: {integrity: sha512-SSSS}
+
+  lodash@4.17.20:
+    resolution: {integrity: sha512-AAAA}
+
+snapshots:
+
+  '@scope/pkg@1.0.0(react@18.2.0)':
+    dependencies:
+      react: 18.2.0
+
+  lodash@4.17.20: {}
+"""
+
+_PNPM_V6 = """\
+lockfileVersion: '6.0'
+
+dependencies:
+  lodash:
+    specifier: ^4.17.20
+    version: 4.17.20
+
+packages:
+
+  /@scope/pkg@1.0.0(react@18.2.0):
+    resolution: {integrity: sha512-SSSS}
+    dev: false
+
+  /lodash@4.17.20:
+    resolution: {integrity: sha512-AAAA}
+    dev: false
+"""
+
+_PNPM_V5 = """\
+lockfileVersion: 5.4
+
+specifiers:
+  lodash: ^4.17.20
+
+packages:
+
+  /@scope/pkg/1.0.0_react@18.2.0:
+    resolution: {integrity: sha512-SSSS}
+    dev: false
+
+  /lodash/4.17.20:
+    resolution: {integrity: sha512-AAAA}
+    dev: false
+"""
+
+
+class TestPnpmFormats:
+    @pytest.mark.parametrize("lock", [_PNPM_V9, _PNPM_V6, _PNPM_V5], ids=["v9", "v6", "v5"])
+    def test_bump(self, lock: str) -> None:
+        new = lock.replace("4.17.20", "4.17.21").replace("AAAA", "BBBB")
+        assert parse_changed_packages(_full_diff(lock, new), "pnpm") == [("lodash", "4.17.21")]
+
+    @pytest.mark.parametrize("lock", [_PNPM_V9, _PNPM_V6, _PNPM_V5], ids=["v9", "v6", "v5"])
+    def test_scoped_package_with_peer_suffix(self, lock: str) -> None:
+        new = lock.replace("SSSS", "TTTT")
+        assert parse_changed_packages(_full_diff(lock, new), "pnpm") == [("@scope/pkg", "1.0.0")]
+
+    def test_importer_change_is_not_a_package(self) -> None:
+        new = _PNPM_V9.replace("specifier: ^4.17.20", "specifier: ^4.17.21")
+        assert parse_changed_packages(_full_diff(_PNPM_V9, new), "pnpm") == []
+
+    def test_git_reference_has_no_version_to_verify(self) -> None:
+        new = _PNPM_V9.replace(
+            "snapshots:",
+            "  tool@https://codeload.github.com/o/tool/tar.gz/abc123:\n"
+            "    resolution: {tarball: https://codeload.github.com/o/tool/tar.gz/abc123}\n"
+            "\nsnapshots:",
+        )
+        assert parse_changed_packages(_full_diff(_PNPM_V9, new), "pnpm") == [("tool", "")]
+
+
+_PIPFILE_LOCK: dict[str, object] = {
+    "_meta": {"hash": {"sha256": "mmmm"}, "pipfile-spec": 6},
+    "default": {
+        "certifi": {"hashes": ["sha256:aaaa"], "version": "==2024.2.2"},
+        "Requests": {"hashes": ["sha256:bbbb"], "index": "pypi", "version": "==2.31.0"},
+    },
+    "develop": {
+        "pytest": {"hashes": ["sha256:cccc"], "version": "==8.0.0"},
+    },
+}
+
+
+def _pipfile_diff(mutate: object) -> str:
+    new = copy.deepcopy(_PIPFILE_LOCK)
+    mutate(new)  # type: ignore[operator]
+    return _full_diff(json.dumps(_PIPFILE_LOCK, indent=4), json.dumps(new, indent=4))
+
+
+class TestPipfileLock:
+    def test_ecosystem(self) -> None:
+        assert detect_ecosystem("Pipfile.lock") == "pipenv"
+
+    def test_bump(self) -> None:
+        def bump(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["default"]["Requests"] = {"hashes": ["sha256:dddd"], "version": "==2.32.0"}
+
+        assert parse_changed_packages(_pipfile_diff(bump), "pipenv") == [("requests", "2.32.0")]
+
+    def test_develop_section(self) -> None:
+        def bump(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["develop"]["pytest"]["version"] = "==8.1.0"
+
+        assert parse_changed_packages(_pipfile_diff(bump), "pipenv") == [("pytest", "8.1.0")]
+
+    def test_new_package(self) -> None:
+        def add(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["default"]["idna"] = {"hashes": ["sha256:eeee"], "version": "==3.7"}
+
+        assert parse_changed_packages(_pipfile_diff(add), "pipenv") == [("idna", "3.7")]
+
+    def test_meta_change_is_not_a_package(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["_meta"]["hash"]["sha256"] = "nnnn"
+
+        assert parse_changed_packages(_pipfile_diff(edit), "pipenv") == []
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
