@@ -134,18 +134,21 @@ GitHub Action and the ids of the pre-commit hooks.
 
 To release:
 
-1. In a pull request, set the version in `src/heckler/_version.py` and move
+1. In a pull request, set the version in `src/heckler/_version.py`, move
    the entries under `[Unreleased]` in `CHANGELOG.md` to a
-   `[MAJOR.MINOR.PATCH] - YYYY-MM-DD` section.
-2. Once it is merged, tag that commit on `main` as `vMAJOR.MINOR.PATCH` and
-   push the tag.
+   `[MAJOR.MINOR.PATCH] - YYYY-MM-DD` section, and put the new version in
+   the two examples in `README.md` that name one (`uses: kholcomb/heckler@`
+   and the pre-commit `rev:`).
+2. Once it is merged, tag that commit on `main` as `vMAJOR.MINOR.PATCH` with
+   a signed tag (`git tag -s`) and push the tag.
 
 The release workflow runs for a tag of exactly that form and stops before
 publishing if the tag does not match `_version.py` or `CHANGELOG.md` has no
-section for the version. It publishes to PyPI, creates the GitHub release,
-and moves the major tag (`v1`) to the newest release of that major version,
-which is what `uses: kholcomb/heckler@v1` follows. A MAJOR release gets a
-major tag of its own and leaves the previous one where it is.
+section for the version. It publishes to PyPI and creates the GitHub release.
+
+Full versions are the only tags. There is no major tag such as `v1` that
+moves with each release, so `uses: kholcomb/heckler@v1.1.0` names one release
+and keeps naming it.
 
 ## Reporting Bugs
 

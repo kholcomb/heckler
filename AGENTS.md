@@ -80,4 +80,4 @@ Tests fail when these drift, so change both sides together.
 
 - Commit subjects follow Conventional Commits (`fix(scanner): ...`); the commit-msg hook rejects anything else. `main` takes changes through pull requests only.
 - Versions follow Semantic Versioning, and `CONTRIBUTING.md` says what counts as MAJOR, MINOR and PATCH for this tool. The version lives in `src/heckler/_version.py`.
-- A release is a tag of the form `vMAJOR.MINOR.PATCH` on `main`. `.github/workflows/release.yml` runs for no other tag, and stops before publishing when the tag does not match `_version.py` or `CHANGELOG.md` has no section for the version. It publishes to PyPI, creates the GitHub release, and moves the major tag (`v1`) to the newest release of that major version.
+- A release is a tag of the form `vMAJOR.MINOR.PATCH` on `main`. `.github/workflows/release.yml` runs for no other tag, and stops before publishing when the tag does not match `_version.py` or `CHANGELOG.md` has no section for the version. It publishes to PyPI and creates the GitHub release. The tag is signed (`git tag -s`), and full versions are the only tags: there is no major tag such as `v1`.
