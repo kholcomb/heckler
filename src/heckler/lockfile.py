@@ -20,7 +20,7 @@ import subprocess
 import sys
 import sysconfig
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from .formatters.text import spell_out
 from .scanner import Scanner
@@ -645,7 +645,13 @@ _PYTHON_ECOSYSTEMS = ("pip", "poetry", "pipenv")
 _VENV_DIR_NAMES = (".venv", "venv", "env")
 _MAX_PATH_INTERPRETERS = 4
 
+# What another interpreter is asked: where it keeps installed packages. The
+# first statement takes the working directory off its import path. "python -c"
+# puts that directory first, and the interpreter starts in the tree being
+# checked, so a sysconfig.py committed there is what "import sysconfig" would
+# otherwise run. sys is built in and is not looked up on the path at all.
 _SITE_PACKAGES_QUERY = (
+    "import sys; sys.path[:] = [p for p in sys.path if p]; "
     "import site, sysconfig; p = sysconfig.get_paths(); "
     "print(p['purelib']); print(p['platlib']); "
     "print(site.getusersitepackages() if site.ENABLE_USER_SITE else '')"
@@ -736,8 +742,8 @@ def _query_interpreter(executable: str) -> list[Path]:
 
 
 @functools.lru_cache(maxsize=1)
-def _path_site_packages() -> tuple[Path, ...]:
-    """Site-packages of the other Python interpreters on PATH.
+def _path_site_packages() -> tuple[tuple[Path, ...], ...]:
+    """Site-packages of the other Python interpreters on PATH, one group for each.
 
     Under pre-commit heckler runs from its own isolated environment, which
     never holds the project's dependencies. pre-commit puts that environment
@@ -746,7 +752,7 @@ def _path_site_packages() -> tuple[Path, ...]:
     """
     own_bin = os.path.dirname(os.path.abspath(sys.executable))
     names = ("python.exe",) if os.name == "nt" else ("python3", "python")
-    found: list[Path] = []
+    found: list[tuple[Path, ...]] = []
     queried = 0
     for directory in os.environ.get("PATH", "").split(os.pathsep):
         if not directory or os.path.abspath(directory) == own_bin:
@@ -754,7 +760,7 @@ def _path_site_packages() -> tuple[Path, ...]:
         for name in names:
             executable = os.path.join(directory, name)
             if os.path.isfile(executable) and os.access(executable, os.X_OK):
-                found.extend(_query_interpreter(executable))
+                found.append(tuple(_query_interpreter(executable)))
                 queried += 1
                 break
         if queried >= _MAX_PATH_INTERPRETERS:
@@ -762,8 +768,13 @@ def _path_site_packages() -> tuple[Path, ...]:
     return tuple(found)
 
 
-def _python_site_packages(lockfile_dir: Path) -> Iterator[Path]:
-    """Site-packages directories that may hold the project's dependencies.
+def _python_environments(lockfile_dir: Path) -> Iterator[list[Path]]:
+    """Python environments that may hold the project's dependencies.
+
+    Each is given as its site-packages directories, of which one interpreter
+    can have three: for pure Python, for compiled code and for the user. A
+    package is free to install into any of them, so they are searched as one
+    place. A directory is listed once, in the first environment that has it.
 
     Cheapest and most specific first: a virtualenv next to the lockfile or in
     the working directory, then the environment heckler itself runs in, then
@@ -771,82 +782,198 @@ def _python_site_packages(lockfile_dir: Path) -> Iterator[Path]:
     """
     seen: set[Path] = set()
 
-    def fresh(paths: Iterable[Path]) -> Iterator[Path]:
+    def fresh(paths: Iterable[Path]) -> list[Path]:
+        new: list[Path] = []
         for path in paths:
             resolved = path.resolve()
             if resolved not in seen and path.is_dir():
                 seen.add(resolved)
-                yield path
+                new.append(path)
+        return new
 
     for base in (lockfile_dir, Path.cwd()):
         for name in _VENV_DIR_NAMES:
             venv = base / name
             if (venv / "pyvenv.cfg").is_file():
-                yield from fresh(_venv_site_packages(venv))
-    yield from fresh(_own_site_packages())
-    yield from fresh(_path_site_packages())
+                yield fresh(_venv_site_packages(venv))
+    yield fresh(_own_site_packages())
+    for interpreter in _path_site_packages():
+        yield fresh(interpreter)
 
 
 def _normalize_dist_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+# A version in every spelling PEP 440 allows: "1.0alpha1", "1.0-a.1" and
+# "1.0A1" are one version, and so are "1.0.post1" and "1.0-1". This is the
+# pattern from the appendix of the PEP. tests/test_requirements_oracle.py
+# holds it to what the packaging library, the reference implementation,
+# says about the same strings.
+_PEP440_RE = re.compile(
+    r"""
+    v?
+    (?:(?P<epoch>[0-9]+)!)?
+    (?P<release>[0-9]+(?:\.[0-9]+)*)
+    (?:[-_.]?(?P<pre_l>alpha|a|beta|b|preview|pre|c|rc)[-_.]?(?P<pre_n>[0-9]+)?)?
+    (?P<post>-(?P<post_n1>[0-9]+)|[-_.]?(?:post|rev|r)[-_.]?(?P<post_n2>[0-9]+)?)?
+    (?P<dev>[-_.]?dev[-_.]?(?P<dev_n>[0-9]+)?)?
+    (?:\+[a-z0-9]+(?:[-_.][a-z0-9]+)*)?
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+_PRE_RELEASE_LETTERS = {"alpha": "a", "beta": "b", "c": "rc", "pre": "rc", "preview": "rc"}
+
+
+def _version_key(version: str) -> tuple[object, ...] | None:
+    """What two spellings of one version have in common; None if it is not a PEP 440 version."""
+    m = _PEP440_RE.fullmatch(version.strip())
+    if not m:
+        return None
+    release = [int(part) for part in m.group("release").split(".")]
+    while len(release) > 1 and release[-1] == 0:
+        release.pop()
+    pre = None
+    if m.group("pre_l"):
+        letter = m.group("pre_l").lower()
+        pre = (_PRE_RELEASE_LETTERS.get(letter, letter), int(m.group("pre_n") or 0))
+    post = int(m.group("post_n1") or m.group("post_n2") or 0) if m.group("post") else None
+    dev = int(m.group("dev_n") or 0) if m.group("dev") else None
+    return int(m.group("epoch") or 0), tuple(release), pre, post, dev
+
+
 def _same_python_version(left: str, right: str) -> bool:
-    """Compare two version strings the way ``==`` does, ignoring zero padding."""
+    """Compare two version strings the way ``==`` does.
 
-    def normalize(version: str) -> str:
-        version = version.strip().lower().lstrip("v").split("+", 1)[0]
-        m = re.match(r"^(\d+(?:\.\d+)*)(.*)$", version)
-        if not m:
-            return version
-        release = m.group(1).split(".")
-        while len(release) > 1 and release[-1] == "0":
-            release.pop()
-        return ".".join(release) + re.sub(r"[-_.]", "", m.group(2))
-
-    return normalize(left) == normalize(right)
-
-
-def _find_distributions(site_packages: Path, name: str) -> list[tuple[Path, str]]:
-    """Installed distributions of *name*, as ``(metadata path, version)``.
-
-    The import name of a package is often not its distribution name (PyYAML
-    installs ``yaml``), so the lookup goes through the ``.dist-info`` and
-    ``.egg-info`` entries that installers leave behind.
+    The local part (``+cpu``) is not compared: a pin seldom carries one,
+    and the installed copy of what it names often does.
     """
-    wanted = _normalize_dist_name(name)
+    left_key, right_key = _version_key(left), _version_key(right)
+    if left_key is None or right_key is None:
+        # Not versions as PEP 440 knows them. Then only the same text is
+        # the same version.
+        return left.strip().lower() == right.strip().lower()
+    return left_key == right_key
+
+
+class _Installed(NamedTuple):
+    """A ``.dist-info`` or ``.egg-info`` directory, and what it says it is."""
+
+    metadata: Path
+    names: frozenset[str]  # normalised
+    versions: tuple[str, ...]
+
+    def is_version(self, version: str) -> bool:
+        """Whether this may be *version*; an entry that gives none cannot be checked."""
+        return not self.versions or any(_same_python_version(v, version) for v in self.versions)
+
+
+def _declared(metadata: Path) -> tuple[list[str], list[str]]:
+    """Every ``Name`` and ``Version`` header in the metadata file of an entry.
+
+    Read more generously than an installer reads them: a header counts
+    wherever it stands before the first empty line, and all of them count
+    when there are several. An entry taken for a package it is not costs a
+    scan; one that is missed can hide what it installed.
+    """
+    names: list[str] = []
+    versions: list[str] = []
+    headers = {"name": names, "version": versions}
+    for filename in ("METADATA", "PKG-INFO"):
+        try:
+            with open(metadata / filename, encoding="utf-8", errors="replace") as f:
+                values: list[str] | None = None
+                for line in f:
+                    if line == "\n":
+                        break
+                    if line[0] in " \t":
+                        if values is not None:
+                            values[-1] += line  # a value folded over several lines
+                        continue
+                    key, _, value = line.partition(":")
+                    values = headers.get(key.strip().lower())
+                    if values is not None:
+                        values.append(value)
+        except OSError:
+            continue
+    return [name.strip() for name in names], [version.strip() for version in versions]
+
+
+@functools.cache
+def _installed_distributions(site_packages: Path) -> tuple[_Installed, ...]:
+    """The distributions that left metadata in a site-packages directory.
+
+    Read once for a scan, however many packages changed: the callers that
+    start one, scan_changed_deps() and resolve_package(), forget it first.
+
+    A distribution goes by the name in its directory name and by the one in
+    its metadata file, and likewise for the version. Neither is taken over
+    the other, because an installer does not hold them to each other: pip
+    checks the metadata file against what was asked for, and of the
+    directory name only that it starts with the project name.
+
+    Only a directory counts. A file with one of the suffixes lists nothing
+    that was installed, so it cannot speak for a package.
+    """
     try:
         entries = sorted(site_packages.iterdir())
     except OSError:
-        return []
-    found: list[tuple[Path, str]] = []
+        return ()
+    found: list[_Installed] = []
     for entry in entries:
-        if entry.suffix not in (".dist-info", ".egg-info"):
+        if entry.suffix not in (".dist-info", ".egg-info") or not entry.is_dir():
             continue
         parts = entry.name[: -len(entry.suffix)].split("-")
-        if _normalize_dist_name(parts[0]) == wanted:
-            found.append((entry, parts[1] if len(parts) > 1 else ""))
-    return found
+        names, versions = _declared(entry)
+        names.append(parts[0])
+        versions[:0] = parts[1:2]
+        found.append(
+            _Installed(
+                entry,
+                frozenset(_normalize_dist_name(name) for name in names if name),
+                tuple(dict.fromkeys(version for version in versions if version)),
+            )
+        )
+    return tuple(found)
 
 
-def _distribution_files(site_packages: Path, metadata: Path, all_text: bool = False) -> list[Path]:
+def _find_distributions(site_packages: Path, name: str) -> list[_Installed]:
+    """Every installed distribution that goes by *name*.
+
+    The import name of a package is often not its distribution name (PyYAML
+    installs ``yaml``), so the lookup goes through the ``.dist-info`` and
+    ``.egg-info`` directories that installers leave behind.
+    """
+    wanted = _normalize_dist_name(name)
+    return [dist for dist in _installed_distributions(site_packages) if wanted in dist.names]
+
+
+def _distribution_files(
+    site_packages: Path, metadata: Path, all_text: bool = False
+) -> list[Path] | None:
     """What a distribution installed that is worth scanning.
 
     ``RECORD`` lists every installed file, which keeps the scan to this one
     distribution even when it shares a namespace directory with others.
     Without it, ``top_level.txt`` names the modules and packages.
 
+    None when the metadata does not lead to a single installed file: there
+    is no list, the list cannot be read, or nothing on it exists as a file,
+    a package directory or a ``.py`` module. That is not the empty list,
+    which is a distribution that installed files and none worth scanning.
+
     With *all_text* (``--all-text``) every listed file that is not binary is
     returned, not only those with a source extension.
     """
     record = metadata / "RECORD"
     if record.is_file():
-        files: list[Path] = []
         try:
             with open(record, encoding="utf-8", newline="") as f:
                 rows = [row for row in csv.reader(f) if row]
         except (OSError, UnicodeDecodeError, csv.Error):
-            rows = []
+            return None
+        files: list[Path] = []
+        installed = False
         for row in rows:
             relative = PurePosixPath(row[0])
             if relative.is_absolute() or ".." in relative.parts:
@@ -854,10 +981,11 @@ def _distribution_files(site_packages: Path, metadata: Path, all_text: bool = Fa
             path = site_packages.joinpath(*relative.parts)
             if not path.is_file():
                 continue
+            installed = True
             wanted = Scanner.is_text_file(path) if all_text else Scanner.is_dependency_source(path)
             if wanted:
                 files.append(path)
-        return files
+        return files if installed else None
 
     targets: list[Path] = []
     top_level = metadata / "top_level.txt"
@@ -867,32 +995,63 @@ def _distribution_files(site_packages: Path, metadata: Path, all_text: bool = Fa
         except (OSError, UnicodeDecodeError):
             modules = []
         for module in modules:
+            if module in (".", "..") or "/" in module or "\\" in module:
+                continue  # a path, which would lead out of what was installed
             if (site_packages / module).is_dir():
                 targets.append(site_packages / module)
             elif (site_packages / f"{module}.py").is_file():
                 targets.append(site_packages / f"{module}.py")
-    return targets
+    return targets or None
 
 
 def _resolve_python(
     pkg_name: str, version: str, lockfile_dir: Path, all_text: bool = False
 ) -> tuple[list[Path], str]:
     other_versions: list[str] = []
-    for site_packages in _python_site_packages(lockfile_dir):
-        for metadata, installed in _find_distributions(site_packages, pkg_name):
-            if version and installed and not _same_python_version(installed, version):
-                other_versions.append(installed)
-                continue
-            return _distribution_files(site_packages, metadata, all_text), ""
+    for directories in _python_environments(lockfile_dir):
+        found = [
+            (site_packages, dist)
+            for site_packages in directories
+            for dist in _find_distributions(site_packages, pkg_name)
+        ]
+        if not found:
+            continue
+        if version and not any(dist.is_version(version) for _, dist in found):
+            other_versions.extend(dist.versions[0] for _, dist in found)
+            continue
+
+        # An environment should hold one distribution of a name. When it
+        # holds more, which of them describes the code that gets imported is
+        # not something their names settle, and a package can install an
+        # entry made to be found first. So none is chosen over another:
+        # what any of them lists is scanned, whatever version it gives. One
+        # that lists nothing takes nothing from the rest; the package goes
+        # unscanned only when none of them leads to a file.
+        targets: dict[Path, None] = {}
+        unlisted: list[str] = []
+        for site_packages, dist in found:
+            files = _distribution_files(site_packages, dist.metadata, all_text)
+            if files is None:
+                unlisted.append(dist.metadata.name)
+            else:
+                targets.update(dict.fromkeys(files))
+        if len(unlisted) == len(found):
+            one = len(unlisted) == 1
+            return [], (
+                f"{' and '.join(unlisted)} {'does' if one else 'do'} not say which"
+                f" files {'it' if one else 'they'} installed"
+            )
+        return list(targets), ""
     if other_versions:
         return [], f"the installed version is {other_versions[0]}"
 
     # No installer metadata anywhere: fall back to a directory named after
     # the package, which is all that can be said about such an install.
-    for site_packages in _python_site_packages(lockfile_dir):
-        for guess in (pkg_name, pkg_name.replace("-", "_")):
-            if (site_packages / guess).is_dir():
-                return [site_packages / guess], ""
+    for directories in _python_environments(lockfile_dir):
+        for site_packages in directories:
+            for guess in (pkg_name, pkg_name.replace("-", "_")):
+                if (site_packages / guess).is_dir():
+                    return [site_packages / guess], ""
     return [], "it is not installed"
 
 
@@ -904,13 +1063,25 @@ def resolve_package(
     Returns ``(targets, problem)``. *targets* are directories or files to
     scan and may be empty for a package that ships nothing scannable.
     *problem* is empty on success; otherwise it says why the package cannot
-    be scanned, which is the case when it is not installed or when the
-    installed copy is a different version than the lockfile names.
+    be scanned, which is the case when it is not installed, when the
+    installed copy is a different version than the lockfile names, or when
+    a Python package's metadata leads to none of the files it installed.
+
+    A Python package is every distribution of that name in the environment
+    it was found in. Where there is more than one, what each of them lists
+    is scanned.
 
     *all_text* is ``--all-text``: return every text file a Python
     distribution installed, rather than the ones with a source extension.
     Directories are filtered by the scanner either way.
     """
+    _installed_distributions.cache_clear()  # what is installed now, not at the last call
+    return _locate_package(pkg_name, version, ecosystem, lockfile_path, all_text)
+
+
+def _locate_package(
+    pkg_name: str, version: str, ecosystem: str, lockfile_path: str, all_text: bool
+) -> tuple[list[Path], str]:
     lockfile_dir = Path(lockfile_path).parent
     if ecosystem in _NODE_ECOSYSTEMS:
         return _resolve_node(pkg_name, version, ecosystem, lockfile_dir)
@@ -939,10 +1110,12 @@ def scan_changed_deps(
     Anything that could not be checked is reported on stderr and, when
     *unscanned* is given, described there so the caller can fail the run: a
     lockfile heckler has no parser for, a part of one it could not read, and
-    a changed package that is missing or installed at another version.
+    a changed package that is missing, installed at another version, or
+    described by metadata that lists none of its installed files.
     """
     all_findings: list[Finding] = []
-    all_text = scanner.text_extensions is None
+    all_text = scanner.all_text
+    _installed_distributions.cache_clear()
 
     def not_scanned(message: str) -> None:
         print(f"Warning: {message}", file=sys.stderr)
@@ -969,17 +1142,23 @@ def scan_changed_deps(
             not_scanned(f"{lf_path}: {problem}")
 
         for pkg_name, version in packages:
-            targets, problem = resolve_package(pkg_name, version, ecosystem, lf_path, all_text)
+            targets, problem = _locate_package(pkg_name, version, ecosystem, lf_path, all_text)
             if problem:
                 label = f"{pkg_name} {version}".strip()
                 not_scanned(f"{label} changed in {lf_path} but was not scanned: {problem}")
                 continue
+            # Two distributions of one name can list the same file, or one a
+            # directory and the other a file in it; a finding is reported once.
+            reported: set[tuple[str, int, int, int, str]] = set()
             for target in targets:
-                findings = scanner.scan_path(target)
-                # Tag findings with package info
-                for f in findings:
+                for f in scanner.scan_path(target):
+                    key = (f.file, f.line, f.column, f.codepoint, f.char_name)
+                    if key in reported:
+                        continue
+                    reported.add(key)
+                    # Tag findings with package info
                     f.source = "dependency"
                     f.package = pkg_name
-                all_findings.extend(findings)
+                    all_findings.append(f)
 
     return all_findings

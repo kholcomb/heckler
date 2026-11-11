@@ -150,13 +150,13 @@ class TestSkippedFiles:
             secret.chmod(0o644)
 
     @needs_permissions
-    def test_unreadable_file_with_all_text(self, tmp_path: Path) -> None:
+    def test_unreadable_file_with_a_name_that_says_nothing(self, tmp_path: Path) -> None:
         """The binary check cannot read it either; that must not pass it over."""
         secret = tmp_path / "locked.weird"
         secret.write_text(PLANTED, encoding="utf-8")
         secret.chmod(0)
         try:
-            scanner = Scanner(text_extensions=None)
+            scanner = Scanner()
             assert scanner.scan_path(tmp_path) == []
             assert [path for path, _ in scanner.skipped] == [str(secret)]
         finally:

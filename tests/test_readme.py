@@ -13,7 +13,13 @@ import pytest
 
 from heckler.characters import DANGEROUS_UNICODE_RE
 from heckler.cli import build_parser, main
-from heckler.scanner import DEFAULT_TEXT_EXTENSIONS, KNOWN_FILENAME_PREFIXES, KNOWN_FILENAMES
+from heckler.scanner import (
+    DEFAULT_TEXT_EXTENSIONS,
+    DEP_SCAN_EXTENSIONS,
+    DEP_SCAN_FILENAMES,
+    KNOWN_FILENAME_PREFIXES,
+    KNOWN_FILENAMES,
+)
 
 REPO_ROOT = Path(__file__).parent.parent
 README = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
@@ -83,31 +89,26 @@ class TestNumbers:
         assert claims, "no codepoint count found in README.md"
         assert set(claims) == {f"{flagged:,}"}
 
-    def test_extension_count(self) -> None:
-        claims = {int(n) for n in re.findall(r"([0-9]+)\+ file extensions", README)}
-        assert len(claims) == 1, claims
-        (claimed,) = claims
-        assert claimed <= len(DEFAULT_TEXT_EXTENSIONS) < claimed + 10
 
+class TestNoSupportList:
+    """The README says what is scanned by rule. It does not list what heckler supports.
 
-class TestLanguageSupport:
-    SECTION = _section("## Language Support", "### Dependency / Supply Chain Coverage")
+    A file is scanned for holding text, not for being on a list, so a table
+    of languages, extensions or file names would describe a limit that is
+    not there.
+    """
 
-    def test_table_lists_exactly_the_default_extensions(self) -> None:
-        rows = [line for line in self.SECTION.splitlines() if line.startswith("|")]
-        in_table = set(re.findall(r"`(\.[A-Za-z0-9]+)`", "\n".join(rows)))
-        assert sorted(DEFAULT_TEXT_EXTENSIONS - in_table) == [], "scanned but not in the table"
-        assert sorted(in_table - DEFAULT_TEXT_EXTENSIONS) == [], "in the table but not scanned"
-
-    def test_named_files_are_scanned(self) -> None:
-        paragraph = next(
-            line for line in self.SECTION.splitlines() if line.startswith("Well-known files")
+    def test_no_extension_or_file_name_from_the_selection_lists(self) -> None:
+        quoted = set(re.findall(r"`([^`\n]+)`", README))
+        listed = (
+            DEFAULT_TEXT_EXTENSIONS | DEP_SCAN_EXTENSIONS | KNOWN_FILENAMES | DEP_SCAN_FILENAMES
         )
-        for name in re.findall(r"`([^`]+)`", paragraph):
-            if name.endswith(".*"):
-                assert name[:-1] in KNOWN_FILENAME_PREFIXES, name
-            else:
-                assert name in KNOWN_FILENAMES or name.startswith(KNOWN_FILENAME_PREFIXES), name
+        assert sorted(quoted & listed) == []
+        prefixes = {prefix + "*" for prefix in KNOWN_FILENAME_PREFIXES}
+        assert sorted(quoted & prefixes) == []
+
+    def test_no_count_of_extensions_or_languages(self) -> None:
+        assert re.findall(r"[0-9]+\+? (?:file )?(?:extensions|languages|file types)", README) == []
 
 
 class TestCliReference:

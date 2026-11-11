@@ -367,20 +367,20 @@ _MAX_TOTAL_SIZE = 500 * 1024 * 1024
 def _safe_tar_extract(archive_path: Path, extract_dir: Path, resolved_root: Path) -> None:
     """Extract a tar archive with path traversal and symlink protection."""
     with tarfile.open(archive_path) as tf:
-        # Python 3.12+ has filter='data' which handles this natively.
-        # For 3.9-3.11, we validate manually.
+        # filter='data' handles this natively. Python 3.11 has it from
+        # 3.11.4; before that, we validate manually.
         try:
             tf.extractall(extract_dir, filter="data")
             return
         except TypeError:
-            # filter parameter not supported (Python < 3.12)
+            # filter parameter not supported (Python 3.11.0 to 3.11.3)
             pass
         except tarfile.TarError as e:
-            # Python 3.12+ filter='data' raises FilterError subclasses for
+            # filter='data' raises FilterError subclasses for
             # path traversal, symlinks, etc. Wrap as our error type.
             raise _UnsafeArchiveError(f"Unsafe archive: {e}") from e
 
-        # Manual safe extraction for Python 3.9-3.11
+        # Manual safe extraction for a Python without the filter
         members = tf.getmembers()
         total_size = 0
         for member in members:
@@ -488,7 +488,7 @@ def vet_package(
 
         scanner = Scanner(
             skip_dirs=frozenset(),  # Don't skip anything in extracted package
-            text_extensions=None,  # nor any text file, whatever it is called
+            all_text=True,  # nor any text file, whatever it is called
             severity_threshold=config.severity_threshold,
             exclude_patterns=config.exclude_patterns,
             allow_bom=config.allow_bom,

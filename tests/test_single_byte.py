@@ -173,11 +173,11 @@ class TestEncodingsWithoutAByteOrderMark:
         assert not [name for name in _names(f) if "read as" in name]
 
 
-class TestNulInAFileWithoutAnExtensionList:
-    """With no extension list, content decides what is left out. One byte does not."""
+class TestNulInAFileWithANameThatSaysNothing:
+    """Content decides whether such a file is left out. One byte does not."""
 
     def _scan(self, root: Path) -> tuple[list[str], list[str]]:
-        scanner = Scanner(text_extensions=None)
+        scanner = Scanner()
         names = [f.char_name for f in scanner.scan_path(root)]
         return names, [Path(p).name for p in scanner.binary]
 
@@ -240,12 +240,12 @@ class TestNulInAFileWithoutAnExtensionList:
     ) -> None:
         (tmp_path / "blob").write_bytes(b"\x00" * 200)
         (tmp_path / "ok.txt").write_text("fine\n", encoding="utf-8")
-        assert main(["--ci", "--all-text", str(tmp_path)]) == 0
+        assert main(["--ci", str(tmp_path)]) == 0
         assert "1 file(s) look binary and were not scanned" in capsys.readouterr().err
 
-    def test_cli_says_nothing_with_an_extension_list(
+    def test_cli_says_nothing_when_nothing_was_left_out(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        (tmp_path / "blob").write_bytes(b"\x00" * 200)
+        (tmp_path / "ok.txt").write_text("fine\n", encoding="utf-8")
         assert main(["--ci", str(tmp_path)]) == 0
         assert "binary" not in capsys.readouterr().err

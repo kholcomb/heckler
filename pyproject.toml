@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Detect dangerous invisible Unicode characters in source code and dependencies"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 authors = [{ name = "heckler contributors" }]
 keywords = ["security", "unicode", "glassworm", "trojan-source", "supply-chain"]
 classifiers = [
@@ -17,8 +17,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -30,7 +28,19 @@ classifiers = [
 heckler = "heckler.cli:cli_main"
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.4", "mypy>=1.0", "pre-commit>=3.2"]
+# regex and packaging are reference implementations that the tests check
+# heckler's own Unicode table and version parsing against. Nothing in
+# src/ imports them. The lower bound on regex is the release whose Unicode
+# data the table in characters.py was last generated from.
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.4",
+    "mypy>=1.0",
+    "pre-commit>=3.2",
+    "regex>=2026.9.10",
+    "packaging>=23.0",
+]
 
 [project.urls]
 Repository = "https://github.com/kholcomb/heckler"
@@ -46,14 +56,14 @@ packages = ["src/heckler"]
 testpaths = ["tests"]
 
 [tool.ruff]
-target-version = "py39"
+target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.11"
 strict = true
 
 [tool.heckler]

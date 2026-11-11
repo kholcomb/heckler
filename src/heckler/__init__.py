@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from ._version import __version__
 from .characters import Severity, ThreatCategory
-from .config import Config, load_config
+from .config import Config, ConfigError, load_config
 from .scanner import Finding, Scanner
 
 __all__ = [
     "__version__",
     "Config",
+    "ConfigError",
     "Finding",
     "Scanner",
     "Severity",

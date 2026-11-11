@@ -7,6 +7,7 @@ installed or downloaded.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import shutil
@@ -79,6 +80,22 @@ def install(
         (info / "RECORD").write_text("\n".join(rows) + "\n", encoding="utf-8")
     if top_level is not None:
         (info / "top_level.txt").write_text(top_level, encoding="utf-8")
+
+
+def extra_entry(site_packages: Path, name: str, files: dict[str, str]) -> Path:
+    """A metadata directory of its own, as a package can ship one among its files."""
+    info = site_packages / name
+    info.mkdir()
+    for filename, content in files.items():
+        (info / filename).write_text(content, encoding="utf-8")
+    return info
+
+
+def harmless_module(site_packages: Path) -> Path:
+    module = site_packages / "harmless"
+    module.mkdir()
+    (module / "__init__.py").write_text(CLEAN, encoding="utf-8")
+    return module
 
 
 def node_package(root: Path, relative: str, version: str | None, content: str = CLEAN) -> Path:
@@ -227,6 +244,33 @@ class TestInterpretersOnPath:
         monkeypatch.setattr(sys, "executable", str(tmp_path / "bin" / "python3"))
         _path_site_packages.cache_clear()
         assert _path_site_packages() == ()
+
+
+class TestInterpreterQuery:
+    """Another interpreter is asked for its packages from inside the tree being checked."""
+
+    def test_names_in_the_working_directory_are_not_imported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        expected = lockfile._query_interpreter(sys.executable)
+        assert expected
+        # Plain text under the names the query imports. Read as a module it
+        # would not compile, and the query would come back empty.
+        for name in ("site.py", "sysconfig.py", "threading.py"):
+            (tmp_path / name).write_text("This is not Python.\n", encoding="utf-8")
+        assert lockfile._query_interpreter(sys.executable) == expected
+
+    def test_working_directory_leaves_the_path_before_any_other_import(self) -> None:
+        statements = ast.parse(lockfile._SITE_PACKAGES_QUERY).body
+        cleared = next(
+            index
+            for index, statement in enumerate(statements)
+            if isinstance(statement, ast.Assign)
+            and ast.unparse(statement.targets[0]) == "sys.path[:]"
+        )
+        # sys is built in, so importing it reads nothing from the path.
+        assert [ast.unparse(statement) for statement in statements[:cleared]] == ["import sys"]
 
 
 class TestResolveNode:
@@ -469,3 +513,175 @@ class TestAllText:
         findings = scan_changed_deps(["requirements.txt"], Scanner(scan_deps=True), unscanned)
         assert unscanned == []
         assert len(findings) == 3
+
+
+# The name of an entry that sorts ahead of "heckler_sample-1.0.dist-info",
+# since "-" comes before ".". A package can ship one among its own files.
+EARLIER_ENTRY = "heckler_sample-1.0-py3.12.egg-info"
+IDENTITY = "Name: heckler-sample\nVersion: 1.0\n"
+
+
+class TestMoreThanOneEntryForAName:
+    """No entry that goes by a package's name keeps another from being scanned."""
+
+    @staticmethod
+    def resolve(root: Path) -> tuple[list[Path], str]:
+        return resolve_package("heckler-sample", "1.0", "pip", str(root / "requirements.txt"))
+
+    def test_entry_that_sorts_first_does_not_stand_in_for_the_distribution(
+        self, tmp_path: Path
+    ) -> None:
+        assert EARLIER_ENTRY < "heckler_sample-1.0.dist-info"
+        sp = make_venv(tmp_path)
+        install(sp, "heckler_sample", "1.0", {"sample_impl/__init__.py": PLANTED})
+        harmless = harmless_module(sp)
+        extra_entry(sp, EARLIER_ENTRY, {"PKG-INFO": IDENTITY, "top_level.txt": "harmless\n"})
+
+        targets, problem = self.resolve(tmp_path)
+        assert problem == ""
+        assert set(targets) == {harmless, sp / "sample_impl" / "__init__.py"}
+
+    def test_file_with_a_metadata_name_is_not_metadata(self, tmp_path: Path) -> None:
+        sp = make_venv(tmp_path)
+        install(sp, "heckler_sample", "1.0", {"sample_impl/__init__.py": PLANTED})
+        (sp / EARLIER_ENTRY).write_text(IDENTITY, encoding="utf-8")
+        assert self.resolve(tmp_path) == ([sp / "sample_impl" / "__init__.py"], "")
+
+    @pytest.mark.parametrize(
+        ("directory_name", "directory_version"),
+        [
+            ("heckler_sample", "9.9"),  # another version than its metadata file gives
+            ("heckler_sample_plus", "1.0"),  # a name that only starts with the project's
+        ],
+    )
+    def test_distribution_is_known_by_its_metadata_file_too(
+        self, tmp_path: Path, directory_name: str, directory_version: str
+    ) -> None:
+        """An installer checks the metadata file, and the directory name far less."""
+        sp = make_venv(tmp_path)
+        install(sp, directory_name, directory_version, {"sample_impl/__init__.py": PLANTED})
+        info = sp / f"{directory_name}-{directory_version}.dist-info"
+        (info / "METADATA").write_text(IDENTITY, encoding="utf-8")
+        assert self.resolve(tmp_path) == ([sp / "sample_impl" / "__init__.py"], "")
+
+        harmless = harmless_module(sp)
+        extra_entry(sp, EARLIER_ENTRY, {"PKG-INFO": IDENTITY, "top_level.txt": "harmless\n"})
+        targets, problem = self.resolve(tmp_path)
+        assert problem == ""
+        assert set(targets) == {harmless, sp / "sample_impl" / "__init__.py"}
+
+    def test_entry_in_another_directory_of_the_environment(self, tmp_path: Path) -> None:
+        """One environment has a directory for pure Python and one for compiled code."""
+        first = make_venv(tmp_path)
+        second = tmp_path / ".venv" / "lib64" / "python3.12" / "site-packages"
+        second.mkdir(parents=True)
+        harmless = harmless_module(first)
+        extra_entry(first, EARLIER_ENTRY, {"PKG-INFO": IDENTITY, "top_level.txt": "harmless\n"})
+        install(second, "heckler_sample", "1.0", {"sample_impl/__init__.py": PLANTED})
+
+        targets, problem = self.resolve(tmp_path)
+        assert problem == ""
+        assert set(targets) == {harmless, second / "sample_impl" / "__init__.py"}
+
+    @needs_git
+    def test_findings_are_reported_once_and_fail_the_run(self, repo: Path) -> None:
+        sp = make_venv(repo)
+        install(sp, "heckler_sample", "1.1", {"sample_impl/__init__.py": PLANTED})
+        # Names the directory that holds the file the other entry lists.
+        extra_entry(sp, "heckler_sample-1.1-py3.12.egg-info", {"top_level.txt": "sample_impl\n"})
+        (repo / "requirements.txt").write_text("heckler-sample==1.1\n", encoding="utf-8")
+        _git(repo, "add", "requirements.txt")
+
+        unscanned: list[str] = []
+        findings = scan_changed_deps(["requirements.txt"], Scanner(scan_deps=True), unscanned)
+        assert unscanned == []
+        assert len(findings) == 3
+        assert main(["--ci", "--scan-deps", "--diff-only", "requirements.txt"]) == 1
+
+    def test_each_lookup_sees_what_is_installed_now(self, tmp_path: Path) -> None:
+        sp = make_venv(tmp_path)
+        assert self.resolve(tmp_path) == ([], "it is not installed")
+        install(sp, "heckler_sample", "1.0", {"heckler_sample.py": CLEAN})
+        assert self.resolve(tmp_path) == ([sp / "heckler_sample.py"], "")
+
+    def test_headers_are_read_at_least_as_far_as_an_installer_reads_them(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "METADATA").write_text(
+            "Metadata-Version: 2.1\n"
+            " \n"  # not an empty line: the headers go on
+            "NAME:\n heckler-sample\n"  # in capitals, and folded
+            "Version: 1.0\n"
+            "Name: Another.Name\n"
+            "\n"
+            "Name: in-the-description\n",
+            encoding="utf-8",
+        )
+        assert lockfile._declared(tmp_path) == (["heckler-sample", "Another.Name"], ["1.0"])
+
+
+class TestMetadataThatListsNothing:
+    """Metadata that leads to no installed file is a package that was not scanned."""
+
+    ENTRY = "heckler_sample-1.0.dist-info"
+    PROBLEM = f"{ENTRY} does not say which files it installed"
+
+    @staticmethod
+    def resolve(root: Path) -> tuple[list[Path], str]:
+        return resolve_package("heckler-sample", "1.0", "pip", str(root / "requirements.txt"))
+
+    @pytest.mark.parametrize(
+        "lists",
+        [
+            {},
+            {"RECORD": "gone/__init__.py,sha256=x,1\n"},
+            {"top_level.txt": "gone\n"},
+        ],
+        ids=["no list", "nothing in RECORD exists", "nothing in top_level.txt exists"],
+    )
+    def test_is_not_a_clean_result(self, tmp_path: Path, lists: dict[str, str]) -> None:
+        sp = make_venv(tmp_path)
+        extra_entry(sp, self.ENTRY, {"METADATA": IDENTITY, **lists})
+        assert self.resolve(tmp_path) == ([], self.PROBLEM)
+
+    def test_module_list_does_not_lead_out_of_site_packages(self, tmp_path: Path) -> None:
+        sp = make_venv(tmp_path)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        names = f"..\n../../../../outside\n{outside}\n"
+        extra_entry(sp, self.ENTRY, {"METADATA": IDENTITY, "top_level.txt": names})
+        assert self.resolve(tmp_path) == ([], self.PROBLEM)
+
+    def test_installed_files_that_are_not_code_are_not_a_failure(self, tmp_path: Path) -> None:
+        sp = make_venv(tmp_path)
+        install(sp, "heckler_sample", "1.0", {"sample_impl/_native.so": "not text"})
+        assert self.resolve(tmp_path) == ([], "")
+
+    def test_metadata_in_a_single_file_leaves_the_directory_named_after_the_package(
+        self, tmp_path: Path
+    ) -> None:
+        sp = make_venv(tmp_path)
+        (sp / "heckler_sample-1.0.egg-info").write_text(IDENTITY, encoding="utf-8")
+        package = sp / "heckler_sample"
+        package.mkdir()
+        (package / "__init__.py").write_text(CLEAN, encoding="utf-8")
+        assert self.resolve(tmp_path) == ([package], "")
+
+    @needs_git
+    def test_fails_the_run(self, repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        sp = make_venv(repo)
+        extra_entry(
+            sp,
+            "heckler_sample-1.1.dist-info",
+            {"METADATA": "Name: heckler-sample\nVersion: 1.1\n"},
+        )
+        (repo / "requirements.txt").write_text("heckler-sample==1.1\n", encoding="utf-8")
+        _git(repo, "add", "requirements.txt")
+
+        assert main(["--ci", "--scan-deps", "--diff-only", "requirements.txt"]) == 2
+        captured = capsys.readouterr()
+        assert (
+            "heckler-sample 1.1 changed in requirements.txt but was not scanned:"
+            " heckler_sample-1.1.dist-info does not say which files it installed"
+        ) in captured.err
+        assert "No dangerous" not in captured.out

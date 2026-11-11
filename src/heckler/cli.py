@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ._version import __version__
 from .characters import Severity
-from .config import Config, load_config
+from .config import Config, ConfigError, load_config
 from .formatters import get_formatter
 from .scanner import Finding, Scanner
 
@@ -99,7 +99,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--all-text",
         action="store_true",
-        help="Scan all text files regardless of extension",
+        help=(
+            "Scan every text file inside dependency directories too, where a scan"
+            " otherwise keeps to code"
+        ),
+    )
+    parser.add_argument(
+        "--skip-binary",
+        action="store_true",
+        help=(
+            "Leave out a file passed by name when its content is not text, as a directory walk does"
+        ),
     )
     parser.add_argument(
         "--no-color",
@@ -126,15 +136,15 @@ def main(argv: list[str] | None = None) -> int:
             config_path=args.config,
             scan_deps=args.scan_deps,
         )
-    except FileNotFoundError as e:
+    except (FileNotFoundError, ConfigError) as e:
+        # Settings that were not read are not settings to run with: a scan
+        # under the defaults could report less than the file asked for.
         print(f"Error: {e}", file=sys.stderr)
         return 2
 
     # CLI overrides
     if args.severity:
         config.severity_threshold = Severity(args.severity)
-    if args.all_text:
-        config.text_extensions = None  # type: ignore[assignment]
 
     # Handle --vet mode
     if args.vet:
@@ -165,6 +175,8 @@ def _build_scanner(args: argparse.Namespace, config: Config, *, scan_deps: bool)
     return Scanner(
         skip_dirs=config.skip_dirs,
         text_extensions=config.text_extensions,
+        all_text=args.all_text,
+        skip_binary=args.skip_binary,
         severity_threshold=config.severity_threshold,
         exclude_patterns=config.exclude_patterns,
         allow_bom=config.allow_bom,

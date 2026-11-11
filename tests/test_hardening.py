@@ -542,27 +542,34 @@ class TestNullByteHardening:
         assert [x.codepoint for x in findings] == [0x200B, 0x202E, 0x00]
 
 
-class TestAllTextBinaryFilter:
-    """With no extension filter, content decides what is left out."""
+class TestBinaryFilter:
+    """For a name that says nothing, content decides what is left out."""
 
     def test_unrecognised_binary_is_skipped(self, tmp_path: Path) -> None:
         # Bytes that would decode to U+00A0 if the file were read as text.
         (tmp_path / "blob.bin").write_bytes(b"\x89PNG\x00\x00" + b"\xc2\xa0" * 10)
-        assert Scanner(text_extensions=None).scan_path(tmp_path) == []
+        assert Scanner().scan_path(tmp_path) == []
 
     def test_unrecognised_text_is_scanned(self, tmp_path: Path) -> None:
         (tmp_path / "notes.weird").write_text("a\u200bb\n", encoding="utf-8")
-        assert len(Scanner(text_extensions=None).scan_path(tmp_path)) == 1
+        assert len(Scanner().scan_path(tmp_path)) == 1
 
     def test_unrecognised_utf16_is_scanned(self, tmp_path: Path) -> None:
         (tmp_path / "notes.weird").write_bytes(
             b"\xff\xfe" + 'x = "\u202e";\n'.encode("utf-16-le"),
         )
-        assert len(Scanner(text_extensions=None).scan_path(tmp_path)) == 1
+        assert len(Scanner().scan_path(tmp_path)) == 1
 
     def test_known_filename_with_null_is_scanned(self, tmp_path: Path) -> None:
         (tmp_path / "Makefile").write_bytes(b"#\x00\n" + "x = \u202e\n".encode())
-        assert len(Scanner(text_extensions=None).scan_path(tmp_path)) == 2
+        assert len(Scanner().scan_path(tmp_path)) == 2
+
+    def test_none_for_the_extensions_still_means_all_text(self, tmp_path: Path) -> None:
+        """The older way to ask for it, kept for callers of the library."""
+        scanner = Scanner(text_extensions=None)
+        assert scanner.all_text is True
+        (tmp_path / "notes.weird").write_text("a\u200bb\n", encoding="utf-8")
+        assert len(scanner.scan_path(tmp_path)) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -800,13 +807,9 @@ class TestKnownFilenames:
         findings = Scanner().scan_path(tmp_path)
         assert any("Makefile" in f.file for f in findings)
 
-    def test_unknown_extensionless_file_skipped(self, tmp_path: Path) -> None:
+    def test_unknown_extensionless_file_is_scanned_for_holding_text(self, tmp_path: Path) -> None:
         (tmp_path / "randomfile").write_text('VAR = "\ufe01"\n')
-        assert not Scanner().scan_path(tmp_path)
-
-    def test_all_text_scans_extensionless(self, tmp_path: Path) -> None:
-        (tmp_path / "randomfile").write_text('VAR = "\ufe01"\n')
-        assert Scanner(text_extensions=None).scan_path(tmp_path)
+        assert Scanner().scan_path(tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -1072,9 +1075,18 @@ class TestFileSelection:
         assert len(Scanner().scan_path(tmp_path)) == 1
 
     @pytest.mark.parametrize("name", ["notes", "data.bin", "Dockerfiles", "env", "x.example"])
-    def test_not_scanned_by_default(self, tmp_path: Path, name: str) -> None:
+    def test_a_name_that_says_nothing_is_scanned_for_its_text(
+        self, tmp_path: Path, name: str
+    ) -> None:
         (tmp_path / name).write_text("x = 'a\u200bb'\n", encoding="utf-8")
-        assert Scanner().scan_path(tmp_path) == []
+        assert len(Scanner().scan_path(tmp_path)) == 1
+
+    @pytest.mark.parametrize("name", ["notes", "data.bin", "Dockerfiles", "env", "x.example"])
+    def test_and_left_out_when_it_holds_no_text(self, tmp_path: Path, name: str) -> None:
+        (tmp_path / name).write_bytes(bytes(range(256)) * 4 + "a\u200bb".encode())
+        scanner = Scanner()
+        assert scanner.scan_path(tmp_path) == []
+        assert scanner.binary == [str(tmp_path / name)]
 
     @pytest.mark.parametrize(
         "name",

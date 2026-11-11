@@ -28,21 +28,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - UTF-32 without a byte order mark, and UTF-16 without one in Greek, Cyrillic, Hebrew, Arabic, Thai and the other scripts whose upper byte is a control character, are also read in that encoding, so the character is named
 - More than 10 presentation selectors inside emoji on one line are reported once, at LOW
 - A file that writes more than 10 emoji in a presentation other than the one that emoji mostly has there (bare, U+FE0E or U+FE0F), or that holds more than 50 zero width joiners between emoji, is reported once, at LOW, however its lines are wrapped
-- Scanned by default: `.cc`, `.hh`, `.htm`, `.ipynb`, `.erb`, `.mdc`, `.mts`, `.cts`, `.pth`, `Jenkinsfile`, `.env`, `.env.*`, `Dockerfile.*`, `.cursorrules`, `.windsurfrules`, `.clinerules`, `.cxx`, `.hxx`, `.jsonc`, `.json5`, `.sass`, `.less`, `.kts`, `.rst`, `.adoc`, `.j2`, `.jinja2`, `.pyx`, `.pxd`, `.pxi`, `Containerfile`, `Containerfile.*`, `go.mod`, `go.sum` and `go.work`
-- Scanned inside dependencies: `.mts`, `.cts`, `.vue`, `.svelte`, `.pth`, `.ps1`, `.bat`, `.cc`, `.hh`, `.pyx`, `.pxd`, `.pxi` and `package.json`
+- Inside dependency directories more kinds of code are scanned, and the manifest that names a package's install scripts
 - A file that starts with `#!` is scanned in a directory walk whatever it is called, inside dependencies too
-- A scan says what it left out: a note on stderr names the directories it skipped by name and, with `--all-text`, counts the files it took for binary. `--vet` names those files in its report
-- `[tool.heckler]` in `pyproject.toml` is read on Python 3.9 and 3.10 without `tomli` installed; a line that cannot be read there is named in a warning
+- A scan says what it left out: a note on stderr names the directories it skipped by name and counts the files it took for binary. `--vet` names those files in its report
+- `--skip-binary` leaves out a file passed by name when its content is not text, as a directory walk does
+- `ConfigError`, which `load_config()` and `scan()` raise for a configuration file that cannot be used as it is written
 - `Scanner.skipped`, `Scanner.suppressed`, `Scanner.skipped_dirs` and `Scanner.binary` tell library users what was not scanned and what was suppressed
 
 ### Changed
 
+- Python 3.11 or newer is required
+- A directory walk scans every file whose content is text, whatever it is called. It used to scan only the names on a built-in list, and to pass over the rest without a word
+- `.heckler.yml` is read by heckler's own reader everywhere, also where PyYAML is installed, so that a file means one thing. The rest of YAML (nested keys, anchors, block scalars) is an error with exit code 2
+- A setting with a value it cannot take is an error with exit code 2 instead of being ignored or guessed at: an unknown `severity`, an `allow_bom` or `allow_emoji` that is not true or false, a list setting that is not a list of strings. `on` and `off` are read as true and false
+- The `heckler` pre-commit hook is handed every staged file and leaves out the binary ones itself
+- A presentation selector or a joiner counts as part of an emoji only next to a code point that Unicode lists as an emoji or keeps free for one. Next to any other symbol it is reported at full severity
 - A file with a source extension that contains NUL or other control bytes is reported instead of being treated as binary
 - A NUL byte is reported once per file, and scanning a file stops after 10,000 findings
 - `--diff-only --ci` exits with code 2 when a changed package is not installed, or is installed at a different version than the lockfile names, instead of passing with a warning
 - The `heckler-lockfile` pre-commit hook only triggers on lockfiles heckler can parse
 - Variation selectors and zero width joiners inside well-formed emoji are reported at INFO instead of CRITICAL and MEDIUM; set `allow_emoji: false` to flag every occurrence as before
-- `--all-text` leaves out a file with an unrecognised name when more than one byte in 32 of its first 8 KB is a control byte, and never one that starts with `#!`. A file with a NUL or two in it is scanned, and the NUL reported
+- A file with an unrecognised name is left out as binary when more than one byte in 32 of its first 8 KB is a control byte, and never one that starts with `#!`. A file with a NUL or two in it is scanned, and the NUL reported
 - `dist/` and `build/` are scanned by default, because projects commit them. List them under `extra_skip_dirs` to leave them out
 - `--scan-deps` also scans `.tox`, `.eggs`, `.next`, `.nuxt` and `coverage`
 - `--diff-only` without a lockfile to check is an error (exit code 2) instead of a clean result
@@ -53,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The comment token of a directive has to start the line or follow a space or tab, `--` has to be followed by one, and only spaces and tabs may separate the parts of a directive
 - The line that holds a `heckler-ignore-next-line` directive is itself scanned
 - A lone CR ends a line, so line numbers in files with CR-only line endings match an editor's, and a directive covers one line of such a file rather than all of it
-- `--all-text` applies inside dependency directories and to the files of a package changed in a lockfile
+- `--all-text` is about dependencies only, where a scan otherwise keeps to code: it scans every text file in dependency directories and in a package changed in a lockfile
 - `--vet` reports file paths with the archive they are in (`pkg-1.0.tar.gz/pkg-1.0/setup.py`), and exits with code 2 when part of a package could not be scanned
 - The flags of England, Scotland and Wales, the only emoji built from tag characters, are reported at INFO instead of HIGH
 - Files are reported in sorted order, the same on every filesystem
@@ -70,7 +76,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `**` in allowlist patterns matches any number of directories on every supported Python version
 - `--diff-only` detects version bumps of existing packages in `package-lock.json`, `yarn.lock` and `poetry.lock`, not only newly added packages
 - Dependency constraints in `poetry.lock` are no longer read as package names
-- Inline `# comments` in `.heckler.yml` are no longer read as part of the value when PyYAML is not installed
+- Inline `# comments` in `.heckler.yml` are no longer read as part of the value
+- A list in brackets in `.heckler.yml` is no longer split at a comma inside a quoted string
+- A `pyproject.toml` that is not valid TOML is an error with exit code 2 instead of a traceback
+- `--diff-only` compares versions as PEP 440 does, so `1.0a1` and `1.0alpha1`, or `1.0.post1` and `1.0-1`, are one version and no longer reported as installed at the wrong one
 - `.env.example` was in the extension list, where it could never match; `.env` and `.env.*` are now matched by name
 - A requirement pinned with a wildcard (`name==1.*`) is no longer reported as installed at the wrong version
 - The example in the README is the tool's real output, and a test keeps it so
@@ -85,9 +94,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The dependency scan workflow installs without running install scripts and takes Python packages from wheels only, with a read-only token that is not left in the checkout
 - A UTF-16 byte order mark in front of UTF-8 text no longer hides the text from the scanner
 - A NUL byte after a UTF-16 byte order mark no longer makes heckler take UTF-8 text for UTF-16, which hid the text, and neither does UTF-16 padding in front of it
-- A single NUL byte no longer opts a file out of `--all-text` and `--vet`
+- A single NUL byte no longer opts a file out of a directory walk or of `--vet`
+- A NUL byte in the first 1,024 bytes of a file no longer keeps it from the `heckler` pre-commit hook, which used to receive only what pre-commit classified as text
+- `allow_bom: off` in `.heckler.yml` is read as false. Where PyYAML was not installed it was taken for a non-empty string, which is true
 - Text that is shaped like a suppression directive but is not a comment, such as a `#heckler-ignore` URL fragment or a `--heckler-ignore` flag at the end of a line, no longer suppresses findings
 - `--vet` no longer passes a PyPI release on the strength of its wheel alone when the sdist, or another wheel, holds the characters
+- `--diff-only` asks the interpreters on `PATH` where their packages are without importing anything from the working directory. A `sysconfig.py` in the repository being checked was imported, and so run, by each of them
+- `--diff-only` no longer passes a changed Python package on the strength of the first installed metadata entry that carries its name, which a package can ship among its own files. Every entry under the name is scanned, an entry also counts by the name and version in its metadata file, and a package whose metadata leads to none of its installed files counts as unscanned (exit code 2 with `--ci`)
 
 ## [1.0.0] - 2026-03-23
 

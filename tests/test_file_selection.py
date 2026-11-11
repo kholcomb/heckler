@@ -132,18 +132,113 @@ class TestScripts:
         _plant(tmp_path / "tools" / "run.cgi", "#!/usr/bin/perl\n# note" + ZWSP + "\n")
         assert _scanned(tmp_path) == ["bin/deploy", "tools/run.cgi"]
 
-    def test_without_the_first_line_it_is_not(self, tmp_path: Path) -> None:
-        _plant(tmp_path / "bin" / "deploy", "# note" + ZWSP + "\n")
-        _plant(tmp_path / "bin" / "late", "\n#!/bin/sh\n# note" + ZWSP + "\n")
-        assert _scanned(tmp_path) == []
+    def test_first_line_keeps_a_script_whose_bytes_look_binary(self, tmp_path: Path) -> None:
+        """The same bytes without it, or with it on the second line, are left out and counted."""
+        body = bytes(range(0x20)) * 64 + ("\n# note" + ZWSP + "\n").encode()
+        (tmp_path / "bin").mkdir()
+        (tmp_path / "bin" / "deploy").write_bytes(b"#!/bin/sh\n" + body)
+        (tmp_path / "bin" / "late").write_bytes(b"\n#!/bin/sh\n" + body)
+        (tmp_path / "bin" / "none").write_bytes(body)
+        scanner = Scanner()
+        assert {Path(f.file).name for f in scanner.scan_path(tmp_path)} == {"deploy"}
+        assert scanner.binary == [str(tmp_path / "bin" / "late"), str(tmp_path / "bin" / "none")]
 
     def test_an_extension_list_from_the_caller_does_not_turn_it_off(self, tmp_path: Path) -> None:
         _plant(tmp_path / "bin" / "deploy", "#!/bin/sh\n# note" + ZWSP + "\n")
         assert _scanned(tmp_path, text_extensions=frozenset({".js"})) == ["bin/deploy"]
 
 
+class TestEveryTextFile:
+    """A walk scans a file for holding text, not for being on a list."""
+
+    @pytest.mark.parametrize(
+        "name", ["LICENSE", "notes", "data.custom", "a.b.c", ".hidden", "with space", "x.example"]
+    )
+    def test_scanned_whatever_it_is_called(self, tmp_path: Path, name: str) -> None:
+        _plant(tmp_path / "sub" / name, "note" + ZWSP + "\n")
+        assert _scanned(tmp_path) == [f"sub/{name}"]
+
+    def test_an_extension_on_the_list_is_scanned_whatever_the_file_holds(
+        self, tmp_path: Path
+    ) -> None:
+        """What extra_extensions adds to: a name that vouches for the file."""
+        noise = bytes(range(256)) * 4 + ZWSP.encode()
+        (tmp_path / "a.custom").write_bytes(noise)
+        (tmp_path / "b.other").write_bytes(noise)
+        scanner = Scanner(text_extensions=frozenset({".custom"}))
+        assert {Path(f.file).name for f in scanner.scan_path(tmp_path)} == {"a.custom"}
+        assert scanner.binary == [str(tmp_path / "b.other")]
+
+    def test_extra_extensions_from_the_configuration(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        noise = bytes(range(256)) * 4 + ZWSP.encode()
+        (tmp_path / "a.custom").write_bytes(noise)
+        config = tmp_path / ".heckler.yml"
+        config.write_text("extra_extensions:\n  - .custom\n", encoding="utf-8")
+        assert main(["--ci", str(tmp_path)]) == 0
+        assert "1 file(s) look binary and were not scanned" in capsys.readouterr().err
+        assert main(["--ci", "--config", str(config), str(tmp_path)]) == 1
+
+    def test_all_text_does_not_drop_the_extra_extensions(self, tmp_path: Path) -> None:
+        """--all-text scans more, never less."""
+        (tmp_path / "a.custom").write_bytes(bytes(range(256)) * 4 + ZWSP.encode())
+        config = tmp_path / ".heckler.yml"
+        config.write_text("extra_extensions:\n  - .custom\n", encoding="utf-8")
+        assert main(["--ci", "--all-text", "--config", str(config), str(tmp_path)]) == 1
+
+
+class TestFilesPassedByName:
+    """Always scanned, unless --skip-binary asks for the rule a walk follows."""
+
+    def _files(self, root: Path) -> tuple[Path, Path, Path]:
+        noise = bytes(range(256)) * 4 + ZWSP.encode()
+        blob, source = root / "blob", root / "blob.js"
+        blob.write_bytes(noise)
+        source.write_bytes(noise)
+        return blob, source, _plant(root / "notes", "note" + ZWSP + "\n")
+
+    def test_scanned_whatever_it_holds(self, tmp_path: Path) -> None:
+        blob, _source, _text = self._files(tmp_path)
+        scanner = Scanner()
+        assert scanner.scan_path(blob) != []
+        assert scanner.binary == []
+
+    def test_skip_binary_leaves_out_what_a_walk_would(self, tmp_path: Path) -> None:
+        blob, source, text = self._files(tmp_path)
+        scanner = Scanner(skip_binary=True)
+        assert scanner.scan_path(blob) == []
+        assert scanner.binary == [str(blob)]
+        assert len(scanner.scan_path(text)) == 1
+        assert scanner.scan_path(source) != [], "the name marks it as source"
+        assert scanner.binary == [str(blob)]
+
+    def test_cli_counts_what_it_left_out(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        blob, _source, text = self._files(tmp_path)
+        assert main(["--ci", "--no-color", "--skip-binary", str(blob), str(text)]) == 1
+        captured = capsys.readouterr()
+        assert "1 file(s) look binary and were not scanned" in captured.err
+        assert str(text) in captured.out
+        assert str(blob) not in captured.out
+
+    def test_one_nul_does_not_leave_a_file_out(self, tmp_path: Path) -> None:
+        """The byte that opted a file out of the hook when pre-commit picked the text files."""
+        target = tmp_path / "notes"
+        target.write_bytes(b"\x00 note" + ZWSP.encode() + b"\n" + b"more text\n" * 50)
+        scanner = Scanner(skip_binary=True)
+        assert [f.char_name for f in scanner.scan_path(target)] == ["Null", "Zero Width Space"]
+
+    def test_hook_takes_every_file_and_has_heckler_decide(self) -> None:
+        hooks = Path(__file__).parent.parent / ".pre-commit-hooks.yaml"
+        source_hook = hooks.read_text(encoding="utf-8").split("- id: heckler-lockfile")[0]
+        assert "  types: [file]\n" in source_hook
+        assert "  entry: heckler --ci --skip-binary\n" in source_hook
+
+
 class TestInsideDependencies:
-    """The list is shorter inside a dependency, and still covers what runs."""
+    """Inside a dependency a walk keeps to code, and that covers what runs."""
 
     def _tree(self, root: Path) -> Path:
         package = root / "node_modules" / "pkg"
@@ -171,9 +266,16 @@ class TestInsideDependencies:
             "node_modules/pkg/package.json",
         ]
 
-    def test_all_text_adds_the_rest(self, tmp_path: Path) -> None:
-        scanned = _scanned(self._tree(tmp_path), scan_deps=True, text_extensions=None)
+    @pytest.mark.parametrize("option", [{"all_text": True}, {"text_extensions": None}])
+    def test_all_text_adds_the_rest(self, tmp_path: Path, option: dict[str, object]) -> None:
+        scanned = _scanned(self._tree(tmp_path), scan_deps=True, **option)
         assert len(scanned) == 10
+
+    def test_the_project_around_them_is_scanned_as_ever(self, tmp_path: Path) -> None:
+        _plant(tmp_path / "docs" / "NOTES", "note" + ZWSP + "\n")
+        scanned = _scanned(self._tree(tmp_path), scan_deps=True)
+        assert "docs/NOTES" in scanned
+        assert "node_modules/pkg/README.md" not in scanned
 
     @pytest.mark.parametrize(
         ("name", "content", "expected"),

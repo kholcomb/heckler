@@ -63,6 +63,11 @@ class Finding:
         )
 
 
+# Names that mark a file as source. A directory walk scans such a file
+# whatever its bytes are, and any other file when its content is text. The
+# lists are a floor under that content check, not a filter, so they say
+# nothing about what heckler can scan and are not documented as if they did.
+#
 # Hand-aligned data tables: keep the formatter out.
 # fmt: off
 DEFAULT_TEXT_EXTENSIONS = frozenset({
@@ -114,7 +119,7 @@ DEFAULT_TEXT_EXTENSIONS = frozenset({
     '.tcl',                                        # Tcl
 })
 
-# Well-known files without extensions that should be scanned
+# Well-known files without extensions, scanned whatever their bytes are
 KNOWN_FILENAMES = frozenset({
     'Makefile', 'GNUmakefile', 'makefile',
     'Dockerfile', 'Containerfile', 'Jenkinsfile',
@@ -161,9 +166,13 @@ DEPENDENCY_DIRS = frozenset({
 
 DEFAULT_SKIP_DIRS = DEPENDENCY_DIRS | _NEVER_SCANNED_DIRS
 
-# Restricted set for dependency scanning — source files that could execute
-# or be imported as code. Broader than just "executable" to cover compiled
-# language ecosystems (Rust, Go, Java, etc.) where deps contain source.
+# The directories among those that hold installed packages. Below one of
+# them a walk keeps to code, and a finding names the package it is in.
+_DEPENDENCY_MARKERS = frozenset({'node_modules', 'vendor', 'site-packages', 'target'})
+
+# Inside a dependency directory the walk keeps to code: files that could
+# execute or be imported, compiled languages included, since their packages
+# ship source. all_text lifts the restriction.
 DEP_SCAN_EXTENSIONS = frozenset({
     '.js', '.cjs', '.mjs', '.ts', '.mts', '.cts',  # JavaScript/TypeScript
     '.jsx', '.tsx', '.vue', '.svelte',
@@ -200,9 +209,9 @@ DEP_SCAN_FILENAMES = frozenset({"package.json"})
 
 IGNORE_COMMENT = "heckler-ignore"
 
-# Directives are found by pattern; heckler does not parse the 60-odd languages
-# it scans. Three rules keep text that only looks like a directive from
-# working as one:
+# Directives are found by pattern; heckler does not parse what it scans.
+# Three rules keep text that only looks like a directive from working as
+# one:
 #
 # - The comment opener starts the line or follows a space or tab, and "--"
 #   is followed by one. That rules out the "#heckler-ignore" fragment of a
@@ -474,7 +483,16 @@ def _is_known_name(name: str) -> bool:
 @dataclass
 class Scanner:
     skip_dirs: frozenset[str] = field(default_factory=lambda: DEFAULT_SKIP_DIRS)
+    #: Extensions that mark a file as source, so that it is scanned whatever
+    #: its bytes are. A directory walk scans every other file too when its
+    #: content is text. ``None`` is the older way to ask for ``all_text``.
     text_extensions: frozenset[str] | None = field(default_factory=lambda: DEFAULT_TEXT_EXTENSIONS)
+    #: Scan every text file inside dependency directories as well, where a
+    #: walk otherwise keeps to code.
+    all_text: bool = False
+    #: Leave out a file passed by name when its content is not text, as a
+    #: directory walk does. Without this such a file is always scanned.
+    skip_binary: bool = False
     severity_threshold: Severity = Severity.LOW
     exclude_patterns: list[str] = field(default_factory=list)
     allow_bom: bool = True
@@ -497,8 +515,12 @@ class Scanner:
     #: version control data and tool caches.
     skipped_dirs: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
     #: Files left out because they hold too many control bytes to be text.
-    #: Only a scan without an extension list decides that from the content.
+    #: A file whose name marks it as source is never one of them.
     binary: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.text_extensions is None:
+            self.all_text = True
 
     def scan_text(self, text: str, filename: str = "<string>") -> list[Finding]:
         """Scan a text string for dangerous Unicode. The core primitive."""
@@ -675,8 +697,7 @@ class Scanner:
         # the scan: JavaScript accepts one inside a comment, PHP before its
         # opening tag, and bash after the first line, so stopping there
         # would let a single byte hide everything that follows it. Whether a
-        # file is worth scanning at all is decided by the caller, from its
-        # name.
+        # file is worth scanning at all is decided by the caller.
         bom_codec = _detect_bom_encoding(raw)
         findings = self.scan_text(raw.decode(bom_codec or "utf-8", errors="replace"), name)
 
@@ -719,11 +740,15 @@ class Scanner:
 
     def scan_path(self, root: Path) -> list[Finding]:
         """Recursively scan a directory or single file."""
+        extensions = self._source_extensions()
         if root.is_file():
             # A file named on the command line (which is how pre-commit passes
             # them) still honours the allowlist, so .heckler.yml means the
             # same thing whether heckler walks a directory or is handed files.
             if self._is_excluded(root):
+                return []
+            if self.skip_binary and not self.is_text_file(root, extensions):
+                self.binary.append(str(root))
                 return []
             return self.scan_file(root)
         if not root.is_dir():
@@ -733,7 +758,6 @@ class Scanner:
 
         all_findings: list[Finding] = []
         effective_skip = self._effective_skip_dirs()
-        effective_exts = self.text_extensions
 
         def unreadable(error: OSError) -> None:
             reason = f"the directory could not be read ({error.strerror or error})"
@@ -753,22 +777,17 @@ class Scanner:
                     entered.append(d)
             dirnames[:] = entered
             dp = Path(dirpath)
-            # Use restricted extensions for dependency directories
-            exts = self._extensions_for_path(dp, effective_exts)
+            code_only = not self.all_text and self._in_dependency(dp)
             for fname in sorted(filenames):
                 fpath = dp / fname
                 if os.path.islink(fpath) or self._is_excluded(fpath):
                     continue
-                if exts is None:
-                    wanted = self.is_text_file(fpath)
-                    if not wanted:
-                        self.binary.append(str(fpath))
-                elif exts is DEP_SCAN_EXTENSIONS:
+                if code_only:
                     wanted = self.is_dependency_source(fpath)
                 else:
-                    wanted = (
-                        fpath.suffix.lower() in exts or _is_known_name(fname) or _is_script(fpath)
-                    )
+                    wanted = self.is_text_file(fpath, extensions)
+                    if not wanted:
+                        self.binary.append(str(fpath))
                 if wanted:
                     all_findings.extend(self.scan_file(fpath))
         return all_findings
@@ -787,20 +806,16 @@ class Scanner:
             return self.skip_dirs - DEPENDENCY_DIRS - {"build", "dist"}
         return self.skip_dirs
 
-    def _extensions_for_path(
-        self,
-        dirpath: Path,
-        default_exts: frozenset[str] | None,
-    ) -> frozenset[str] | None:
-        """Use restricted extensions inside dependency directories."""
-        if default_exts is None:
-            # --all-text means every text file, in a dependency as elsewhere.
-            return None
-        parts = set(dirpath.parts)
-        dep_markers = {"node_modules", "vendor", "site-packages", "target"}
-        if parts & dep_markers:
-            return DEP_SCAN_EXTENSIONS
-        return default_exts
+    def _source_extensions(self) -> frozenset[str]:
+        """The extensions that are scanned whatever the file holds."""
+        if self.text_extensions is None:
+            return DEFAULT_TEXT_EXTENSIONS
+        return self.text_extensions
+
+    @staticmethod
+    def _in_dependency(dirpath: Path) -> bool:
+        """True inside a directory that holds installed packages."""
+        return not _DEPENDENCY_MARKERS.isdisjoint(dirpath.parts)
 
     def _classify_path(self, filepath: str) -> tuple[str, str | None]:
         """Determine if a file is project code or a dependency, and extract package name."""
@@ -836,18 +851,20 @@ class Scanner:
         return any(_glob_match(fp_str, pattern) for pattern in self.exclude_patterns)
 
     @staticmethod
-    def is_text_file(filepath: Path) -> bool:
-        """Whether a file is scanned when there is no extension list to go by.
+    def is_text_file(filepath: Path, extensions: frozenset[str] = DEFAULT_TEXT_EXTENSIONS) -> bool:
+        """Whether a directory walk scans a file.
 
-        Content is then the only way to leave out images, archives and the
-        like. A recognised source name is always scanned, so a NUL byte
-        cannot be used to opt such a file out.
+        Every file is scanned unless its content is binary; that is the only
+        way to leave out images, archives and the like. A name that marks
+        the file as source (one of *extensions*, or a well-known file name)
+        is scanned whatever it holds, so nothing written into such a file
+        can opt it out.
         """
-        return Scanner._is_source_name(filepath) or not Scanner._is_binary(filepath)
+        return Scanner._is_source_name(filepath, extensions) or not Scanner._is_binary(filepath)
 
     @staticmethod
     def is_dependency_source(filepath: Path) -> bool:
-        """Whether a file inside a dependency is scanned when there is an extension list.
+        """Whether a file inside a dependency is scanned, unless the scan is of all text.
 
         Code, by extension or by name, and anything that starts with ``#!``:
         the scripts a package installs on ``PATH`` seldom have an extension.
@@ -860,9 +877,11 @@ class Scanner:
         )
 
     @staticmethod
-    def _is_source_name(filepath: Path) -> bool:
-        """True if the name alone marks the file as one heckler scans by default."""
-        return filepath.suffix.lower() in DEFAULT_TEXT_EXTENSIONS or _is_known_name(filepath.name)
+    def _is_source_name(
+        filepath: Path, extensions: frozenset[str] = DEFAULT_TEXT_EXTENSIONS
+    ) -> bool:
+        """True if the name alone marks the file as source."""
+        return filepath.suffix.lower() in extensions or _is_known_name(filepath.name)
 
     @staticmethod
     def _is_binary(filepath: Path) -> bool:

@@ -52,7 +52,7 @@ pre-commit run --all-files
 
 ## Running Checks
 
-The CI pipeline runs the following on Python 3.9 through 3.13. Please ensure
+The CI pipeline runs the following on Python 3.11 through 3.13. Please ensure
 they all pass locally before opening a pull request.
 
 **Linting (Ruff):**
@@ -88,7 +88,7 @@ heckler --ci --severity low .
 ## Code Style
 
 - Heckler is a zero-dependency package. Do not add runtime dependencies.
-- Target Python 3.9+. Avoid syntax or stdlib features from later versions.
+- Target Python 3.11+. Avoid syntax or stdlib features from later versions.
 - Ruff enforces a line length of 100 and the rule sets E, F, W, I, UP, B, and
   SIM. Running `ruff check` before committing will catch most style issues.
 - Code is formatted with `ruff format`; the commit hook applies it. Data

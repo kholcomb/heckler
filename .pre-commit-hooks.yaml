@@ -1,9 +1,12 @@
 - id: heckler
   name: Heckler Unicode Security Scan
   description: Detect dangerous invisible Unicode characters in source code
-  entry: heckler --ci
+  # Every file, not only the ones pre-commit takes for text: its test calls
+  # a file binary for a single NUL in the first 1,024 bytes, which would let
+  # one byte keep a file from the scan. --skip-binary has heckler decide.
+  entry: heckler --ci --skip-binary
   language: python
-  types: [text]
+  types: [file]
   require_serial: false
 
 - id: heckler-lockfile

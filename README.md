@@ -10,7 +10,7 @@
 
 # Heckler
 
-Zero-dependency Python tool that detects dangerous invisible Unicode characters in source code and dependencies. Language-agnostic source scanning covers 120+ file extensions and well-known extensionless files (Makefile, Dockerfile, etc.) across all major ecosystems. Provides coverage on 4,263 codepoints across 7 threat categories including Glassworm supply chain attacks (Variation Selectors), Trojan Source (bidi controls, CVE-2021-42574), zero-width steganography, tag character injection, control characters, and exotic whitespace.
+Zero-dependency Python tool that detects dangerous invisible Unicode characters in source code and dependencies. It scans every text file, whatever it is written in. Provides coverage on 4,263 codepoints across 7 threat categories including Glassworm supply chain attacks (Variation Selectors), Trojan Source (bidi controls, CVE-2021-42574), zero-width steganography, tag character injection, control characters, and exotic whitespace.
 
 ## Install
 
@@ -18,7 +18,7 @@ Zero-dependency Python tool that detects dangerous invisible Unicode characters 
 pip install heckler
 ```
 
-Requires Python 3.9+. No runtime dependencies.
+Requires Python 3.11+. No runtime dependencies.
 
 ## Quick Start
 
@@ -84,7 +84,9 @@ In the text report, the findings on a source line are followed by that line with
 
 4,263 codepoints total: every code point Unicode marks as default-ignorable (drawn as nothing), every space and line separator other than the ordinary space, the control characters, and a few glyphs defined to be blank. Severity levels: CRITICAL > HIGH > MEDIUM > LOW > INFO.
 
-Two things keep a single file from flooding the report. A NUL byte is reported once per file, and a file stops being scanned after 10,000 findings, with a warning. Form feed, which many C, Python and Emacs Lisp files use as a page break, is listed only at `--severity info`. A file that is really binary but has a source extension, or a fixture holding raw terminal escape sequences, will now be reported; add it to the allowlist.
+Two groups of format characters are left out on purpose: the Egyptian hieroglyph format controls (U+13430-1343F) and the Arabic, Syriac and Kaithi number and abbreviation signs (U+0600-0605, U+06DD, U+070F, U+0890-0891, U+08E2, U+110BD, U+110CD). Unicode does not mark them as default-ignorable, which is the property that tells a renderer to draw nothing. They are not bidi controls, and no identifier can hold one.
+
+Two things keep a single file from flooding the report. A NUL byte is reported once per file, and a file stops being scanned after 10,000 findings, with a warning. Form feed, which some source files use as a page break, is listed only at `--severity info`. A file that is really binary but has a source extension, or a fixture holding raw terminal escape sequences, will now be reported; add it to the allowlist.
 
 ## CLI Reference
 
@@ -107,11 +109,12 @@ heckler --vet PACKAGE [--registry npm|pypi]
 | `--config PATH` | Path to `.heckler.yml` config file (error if not found) |
 | `--no-color` | Disable colored output |
 | `--quiet` | Only output findings, no summary |
-| `--all-text` | Scan all text files regardless of extension, inside dependency directories too |
+| `--all-text` | Scan every text file inside dependency directories too, where a scan otherwise keeps to code |
+| `--skip-binary` | Leave out a file passed by name when its content is not text, as a directory walk does |
 
 Exit codes: `0` clean, `1` findings detected (with `--ci`), `2` error.
 
-Scanning nothing is an error, not a clean result. A path that does not exist exits with 2, as do a missing `--config` file and `--diff-only` given no lockfile. With `--ci`, so does anything heckler was asked to scan and could not: a file that is unreadable or larger than 50 MB, a directory it cannot list, and, with `--diff-only`, a changed package that is not installed or is installed at another version, a lockfile heckler has no parser for, and a requirements line it cannot read. Each one is named in a warning on stderr. `--allow-unscanned` keeps the warnings and drops the exit code. `--vet` exits with 1 on findings and with 2 when part of the package could not be scanned, with or without `--ci`.
+Scanning nothing is an error, not a clean result. A path that does not exist exits with 2, as do a missing `--config` file, a configuration file that cannot be used as it is written, and `--diff-only` given no lockfile. With `--ci`, so does anything heckler was asked to scan and could not: a file that is unreadable or larger than 50 MB, a directory it cannot list, and, with `--diff-only`, a changed package that is not installed or is installed at another version, a lockfile heckler has no parser for, and a requirements line it cannot read. Each one is named in a warning on stderr. `--allow-unscanned` keeps the warnings and drops the exit code. `--vet` exits with 1 on findings and with 2 when part of the package could not be scanned, with or without `--ci`.
 
 ## Library API
 
@@ -130,7 +133,7 @@ findings = scanner.scan_path(Path("project/"))
 scanner.skipped     # [(path, reason), ...] for files that could not be scanned
 scanner.suppressed  # {path: count} of findings hidden by heckler-ignore comments
 scanner.skipped_dirs  # directories that were not entered because of their name
-scanner.binary      # files an --all-text scan left out as binary
+scanner.binary      # files left out because their content is not text
 ```
 
 ## Configuration
@@ -149,11 +152,13 @@ allowlist:                 # Glob patterns for files to skip
 extra_skip_dirs:           # Additional directories to skip
   - third_party
 
-extra_extensions:          # Additional file extensions to scan
+extra_extensions:          # Extensions that are scanned whatever the file holds
   - .custom
 ```
 
-Also reads `[tool.heckler]` from `pyproject.toml`, with the same keys. Python 3.9 and 3.10 have no TOML parser in the standard library; there heckler uses `tomli` if it is installed and otherwise reads the table itself, which covers strings, booleans and arrays of strings. A line it cannot read is named in a warning rather than dropped silently.
+Also reads `[tool.heckler]` from `pyproject.toml`, with the same keys.
+
+`.heckler.yml` is a flat file. A setting is a `key: value` line, and a value is a word, a quoted string, a list in brackets on one line, or a list of `- item` lines. heckler reads the file with its own reader and nothing else, so it means the same thing wherever heckler runs. The rest of YAML (nested keys, anchors, block scalars) is an error, and so are a value that a setting cannot take (`severity: hgih`, `allow_bom: maybe`) and a `pyproject.toml` that is not valid TOML. The message names the line, and the exit code is 2: settings that were half read could switch off part of a scan.
 
 Allowlist patterns are globs matched against the file path. `*` and `?` stay within one path segment, `**` spans any number of directories, a pattern without a leading `/` matches at any depth, and a trailing `/` covers everything under that directory. The allowlist also applies to files passed by name, which is how pre-commit runs heckler.
 
@@ -198,33 +203,13 @@ So `heckler-ignore` in a variable name, in the middle of a string, at the end of
 
 Suppression directives are **never honored in dependency code** (node\_modules, vendor, site-packages, target) to prevent malicious packages from hiding attacks.
 
-## Language Support
+## What Gets Scanned
 
-Source scanning is **language-agnostic** — the regex-based detector works on any text file. Out of the box, heckler scans 120+ file extensions:
+heckler scans text, whatever it is written in. A directory walk reads every file whose content is text, and a file passed by name is always scanned.
 
-| Category | Extensions |
-|---|---|
-| Web / JS / TS | `.js`, `.cjs`, `.mjs`, `.ts`, `.mts`, `.cts`, `.jsx`, `.tsx`, `.vue`, `.svelte` |
-| Python | `.py`, `.pyi`, `.pth`, `.pyx`, `.pxd`, `.pxi`, `.ipynb` |
-| Systems | `.c`, `.cc`, `.cpp`, `.cxx`, `.h`, `.hh`, `.hpp`, `.hxx`, `.rs`, `.go`, `.zig`, `.nim`, `.d`, `.v`, `.asm`, `.s` |
-| JVM | `.java`, `.kt`, `.kts`, `.scala`, `.groovy`, `.clj`, `.cljs`, `.cljc`, `.edn` |
-| .NET | `.cs`, `.vb`, `.vbs` |
-| Functional | `.hs`, `.lhs`, `.ml`, `.mli`, `.elm`, `.ex`, `.exs`, `.erl`, `.hrl`, `.purs`, `.rkt`, `.lisp`, `.cl`, `.el`, `.jl` |
-| Mobile | `.swift`, `.dart`, `.m`, `.mm` |
-| Scripting | `.rb`, `.php`, `.lua`, `.pl`, `.r`, `.tcl`, `.cr` |
-| Other languages | `.ada`, `.adb`, `.ads`, `.f90`, `.f95`, `.f03`, `.pas`, `.pp` |
-| Shell | `.sh`, `.bash`, `.zsh`, `.ps1`, `.bat`, `.cmd`, `.fish` |
-| Config / Data | `.yaml`, `.yml`, `.json`, `.jsonc`, `.json5`, `.toml`, `.xml`, `.cfg`, `.ini`, `.conf`, `.properties`, `.sql`, `.graphql`, `.gql`, `.proto`, `.tf`, `.hcl` |
-| Templates | `.html`, `.htm`, `.css`, `.scss`, `.sass`, `.less`, `.ejs`, `.erb`, `.hbs`, `.njk`, `.pug`, `.jinja`, `.jinja2`, `.j2` |
-| Build | `.gradle`, `.rake`, `.cmake`, `.mk`, `.dockerfile` |
-| Docs | `.md`, `.rst`, `.adoc`, `.txt` |
-| Agent instructions | `.mdc` |
+A file is left out as binary when more than one byte in 32 of its first 8 KB is a control byte. A NUL or two does not come to that. A file whose name marks it as source, or whose first line starts with `#!`, is scanned whatever its bytes are, so nothing written into such a file takes it out of the scan; `extra_extensions` adds extensions to those names. A run says how many files it left out as binary, and `--vet` names them. `--skip-binary` applies the same rule to files passed by name, which is how the pre-commit hook runs.
 
-Well-known files without an extension are also scanned: `Makefile`, `Dockerfile`, `Jenkinsfile`, `Gemfile`, `Rakefile`, `Vagrantfile`, `Procfile`, `Justfile`, `BUILD`, `Podfile`, `.gitignore`, `.dockerignore`, `.env`, `.cursorrules`, `.windsurfrules`, `.clinerules`, and more, along with their dotted variants `Dockerfile.*` and `.env.*` (`Dockerfile.dev`, `.env.example`).
-
-A file that starts with `#!` is scanned as well, whatever it is called.
-
-Use `--all-text` to scan every text file regardless of extension. That applies inside dependency directories too, where heckler otherwise keeps to a shorter list: source extensions, `package.json`, and anything that starts with `#!`. With `--all-text` the content decides what is left out: a file with an unrecognised name is taken for binary when more than one byte in 32 of its first 8 KB is a control byte. A NUL or two does not do that, and a file with a recognised name or a `#!` first line is always scanned. The run says how many files it left out as binary, and `--vet` names them.
+Inside dependency directories a walk keeps to code: files that can be run or imported, the manifest that names a package's install scripts, and anything that starts with `#!`. `--all-text` scans every text file there too.
 
 Some directories are not entered in a directory walk. Dependency and generated directories (`node_modules`, `vendor`, `site-packages`, `.venv`, `venv`, `.tox`, `.eggs`, `target`, `.next`, `.nuxt`, `coverage`) are scanned with `--scan-deps`, and a run that skipped one names it in a note on stderr. Version control data and tool caches (`.git`, `__pycache__`, `.mypy_cache`, `.ruff_cache`) are never scanned. `dist/` and `build/` are scanned like any other directory, because projects commit them; list them under `extra_skip_dirs` to leave them out.
 
@@ -248,9 +233,9 @@ Lockfiles for Cargo, Go, Ruby, and Composer are detected but parsers are not yet
 
 In a requirements file, an exact pin (`name==1.2.3`) is checked against the installed version. A bare name, a range (`>=`, `<`, `~=`, ...) or `name @ url` has no version to check, so whatever is installed under that name is scanned. A URL or a path is read for the package it names: an `#egg=` fragment gives the name (`-e git+https://host/repo.git#egg=name`), and the file name of a wheel or source archive gives the name and the version (`./wheels/name-1.0-py3-none-any.whl`). A directory inside the project, such as `-e .`, is the project's own code and is left to the source scan. A URL or path that names no package, and a line that cannot be read as a requirement, count as unscanned.
 
-`--diff-only` scans the installed copy of each package that was added or bumped in the lockfile, so the dependencies have to be installed first. Node packages are looked up in `node_modules`, including pnpm's virtual store. Python packages are looked up in a virtualenv next to the lockfile or in the working directory (`.venv`, `venv`, `env`), then in the environment heckler runs in, then in the other interpreters on `PATH`, which is where an activated virtualenv is found when heckler runs under pre-commit. When the lockfile names a version, the installed copy has to be that version. With `--ci`, a changed package that is missing or installed at another version fails the run with exit code 2 and is named in the output; `--allow-unscanned` turns that back into a warning.
+`--diff-only` scans the installed copy of each package that was added or bumped in the lockfile, so the dependencies have to be installed first. Node packages are looked up in `node_modules`, including pnpm's virtual store. Python packages are looked up in a virtualenv next to the lockfile or in the working directory (`.venv`, `venv`, `env`), then in the environment heckler runs in, then in the other interpreters on `PATH`, which is where an activated virtualenv is found when heckler runs under pre-commit. When the lockfile names a version, the installed copy has to be that version. A Python package is scanned through the list of files its installer recorded, and when an environment holds more than one record under the package's name, the files of each are scanned. With `--ci`, a changed package that is missing, installed at another version, or installed with no record that leads to its files fails the run with exit code 2 and is named in the output; `--allow-unscanned` turns that back into a warning.
 
-`--vet` scans everything the registry offers for the version: the one tarball of an npm package, and for PyPI the sdist and every wheel, since which of them `pip` installs depends on the platform and nothing makes their contents agree. Inside each archive every text file is scanned, whatever its extension, which covers `bin` scripts without one and `.pth` files. The `[VET]` header names the files that were scanned, and a file that could not be unpacked or read makes the result `INCOMPLETE` (exit code 2) rather than `CLEAN`.
+`--vet` scans everything the registry offers for the version: the one tarball of an npm package, and for PyPI the sdist and every wheel, since which of them `pip` installs depends on the platform and nothing makes their contents agree. Inside each archive every text file is scanned, whatever it is called, which covers scripts without an extension and files that an interpreter runs at startup. The `[VET]` header names the files that were scanned, and a file that could not be unpacked or read makes the result `INCOMPLETE` (exit code 2) rather than `CLEAN`.
 
 > **Private registries:** `--vet` fetches packages directly from the public npm and PyPI registries (`registry.npmjs.org`, `pypi.org`) using only Python's stdlib — it does **not** shell out to `npm` or `pip` and does **not** execute any package code during download. This means private or corporate registries are not supported by `--vet`. If you need to scan packages from a private registry, download them manually and use `heckler <path>` to scan the extracted source.
 
@@ -290,6 +275,8 @@ repos:
       - id: heckler-lockfile         # Scan changed dependencies on lockfile change
 ```
 
+The source hook is handed every staged file and leaves out those whose content is not text.
+
 The lockfile hook scans installed packages, so install dependencies before committing a lockfile change. If a changed package is not installed, the hook fails and names it; add `args: [--allow-unscanned]` to the hook to accept that instead.
 
 ### Dependency Scanning Workflow
@@ -326,7 +313,8 @@ The test suite includes:
 - **Archive safety** — builds tar/zip archives with path traversal and symlink style payloads, verifies they're safely rejected
 - **Vet end-to-end** — builds fake `.tgz` and `.whl` packages with planted Glassworm signatures, extracts and scans them
 - **Git integration** — stages a real lockfile in the project repo, parses the diff, resolves package directories, and scans planted findings through the full `--diff-only` chain (non-destructive, cleanup in `finally` blocks)
-- **Hardening** — tests for bypass resistance including null-byte injection, heckler-ignore abuse, U+2028/2029 detection, UTF-16/32 encoding evasion, missing config errors, multi-language extension coverage, and extensionless file scanning
+- **Hardening** — tests for bypass resistance including null-byte injection, heckler-ignore abuse, U+2028/2029 detection, UTF-16/32 encoding evasion, missing config errors, and file selection
+- **Reference data** — holds the character table and the emoji ranges to the Unicode property data in `regex`, and version and requirement parsing to `packaging`. Both are installed for the tests only
 
 ## License
 
