@@ -116,6 +116,25 @@ def _load_pyproject_section() -> dict[str, object]:
     return result if isinstance(result, dict) else {}
 
 
+def _strip_inline_comment(value: str) -> str:
+    """Drop a trailing ``# comment`` from a YAML value.
+
+    As in YAML, ``#`` starts a comment only after whitespace, and never
+    inside a quoted string.
+    """
+    quote = ''
+    for i, ch in enumerate(value):
+        prev = value[i - 1] if i else ' '
+        if quote:
+            if ch == quote:
+                quote = ''
+        elif ch in '"\'' and (prev.isspace() or prev in '[,'):
+            quote = ch
+        elif ch == '#' and prev.isspace():
+            return value[:i].rstrip()
+    return value
+
+
 def _minimal_yaml_parse(text: str) -> dict[str, object]:
     """Parse a flat YAML config file with no external dependencies.
 
@@ -135,7 +154,7 @@ def _minimal_yaml_parse(text: str) -> dict[str, object]:
         if stripped.startswith('- ') and current_key is not None:
             if current_list is None:
                 current_list = []
-            val = stripped[2:].strip().strip('"').strip("'")
+            val = _strip_inline_comment(stripped[2:].strip()).strip('"').strip("'")
             current_list.append(val)
             result[current_key] = current_list
             continue
@@ -145,7 +164,7 @@ def _minimal_yaml_parse(text: str) -> dict[str, object]:
         if m:
             # Save previous list
             key = m.group(1)
-            val_str = m.group(2).strip()
+            val_str = _strip_inline_comment(m.group(2).strip())
 
             current_key = key
             current_list = None

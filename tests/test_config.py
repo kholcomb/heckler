@@ -39,6 +39,31 @@ class TestMinimalYamlParse:
         assert result["severity"] == "high"
         assert len(result) == 1
 
+    def test_inline_comments_are_not_part_of_the_value(self) -> None:
+        text = (
+            "severity: medium           # Minimum severity to report\n"
+            "allow_bom: false           # Flag a BOM at file start\n"
+            "allowlist:                 # Glob patterns for files to skip\n"
+            '  - "**/*.po"              # translations\n'
+            "  - docs/**   # generated\n"
+            "extra_extensions: [.foo, .bar]  # more\n"
+        )
+        result = _minimal_yaml_parse(text)
+        assert result["severity"] == "medium"
+        assert result["allow_bom"] is False
+        assert result["allowlist"] == ["**/*.po", "docs/**"]
+        assert result["extra_extensions"] == [".foo", ".bar"]
+
+    def test_hash_inside_a_value_is_kept(self) -> None:
+        text = (
+            "allowlist:\n"
+            '  - "docs/#old/*"\n'
+            "  - notes#1.txt\n"
+            "  - 'a # b'  # trailing\n"
+        )
+        result = _minimal_yaml_parse(text)
+        assert result["allowlist"] == ["docs/#old/*", "notes#1.txt", "a # b"]
+
 
 class TestLoadConfig:
     def test_defaults(self) -> None:
@@ -61,3 +86,14 @@ class TestLoadConfig:
         import pytest
         with pytest.raises(FileNotFoundError, match="Config file not found"):
             load_config(config_path="/nonexistent/.heckler.yml")
+
+    def test_commented_config_is_applied(self, tmp_path: Path) -> None:
+        cfg = tmp_path / ".heckler.yml"
+        cfg.write_text(
+            "severity: medium   # Minimum severity to report\n"
+            "allow_bom: false   # Flag a BOM at file start\n",
+            encoding="utf-8",
+        )
+        config = load_config(config_path=str(cfg))
+        assert config.severity_threshold == Severity.MEDIUM
+        assert config.allow_bom is False
