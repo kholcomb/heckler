@@ -30,16 +30,18 @@ heckler = "heckler.cli:cli_main"
 [project.optional-dependencies]
 # regex and packaging are reference implementations that the tests check
 # heckler's own Unicode table and version parsing against. Nothing in
-# src/ imports them. The lower bound on regex is the release whose Unicode
-# data the table in characters.py was last generated from.
+# src/ imports them. Every version here is exact, and Renovate raises it
+# (.github/renovate.json), so a release that breaks a check does so on its
+# own pull request. regex is at a release with the Unicode data that the
+# table in characters.py was generated from.
 dev = [
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-    "ruff>=0.4",
-    "mypy>=1.0",
-    "pre-commit>=3.2",
-    "regex>=2026.9.10",
-    "packaging>=23.0",
+    "pytest==9.2.0",
+    "pytest-cov==7.1.0",
+    "ruff==0.17.4",
+    "mypy==2.4.1",
+    "pre-commit==4.7.0",
+    "regex==2026.11.9",
+    "packaging==26.3",
 ]
 
 [project.urls]

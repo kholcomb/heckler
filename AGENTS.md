@@ -62,7 +62,7 @@ Tests fail when these drift, so change both sides together.
 
 - `README.md` and the code (`tests/test_readme.py`): the code point count is checked, every CLI option appears in the CLI Reference, and the example output is what the tool really prints.
 - The documentation says what is scanned by rule. It does not list languages, extensions or file names as supported, in the README, the changelog or anywhere else; a test fails when the README names one from the selection lists.
-- `characters.py` and the Unicode property data (`tests/test_unicode_data.py`, which needs `regex`): the detection set, the format characters left out on purpose, and the emoji ranges. A `regex` release with a newer Unicode version can fail these tests with no change here; the failure prints what to update.
+- `characters.py` and the Unicode property data (`tests/test_unicode_data.py`, which needs `regex`): the detection set, the format characters left out on purpose, and the emoji ranges. `regex` is pinned in `pyproject.toml`. The Renovate pull request that raises it to a release with a newer Unicode version fails these tests; the failure prints what to update.
 - Version and requirement parsing in `lockfile.py` and the `packaging` library (`tests/test_requirements_oracle.py`).
 - The `heckler` hook in `.pre-commit-hooks.yaml`: `types: [file]` and `--skip-binary` go together (`tests/test_file_selection.py`).
 - The `files:` pattern of the `heckler-lockfile` hook in `.pre-commit-hooks.yaml` and `detect_ecosystem()` in `lockfile.py` (`tests/test_lockfile.py`).

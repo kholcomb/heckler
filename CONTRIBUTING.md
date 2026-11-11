@@ -96,6 +96,15 @@ heckler --ci --severity low .
 - Mypy is configured in strict mode. All public functions should have type
   annotations.
 
+## Dependency Updates
+
+The dev dependencies in `pyproject.toml`, the actions in the workflows and
+the hooks in `.pre-commit-config.yaml` are pinned to exact versions.
+[Renovate](https://docs.renovatebot.com/) opens a pull request for each
+update, once a week, and CI runs on it like on any other. Its settings are in
+`.github/renovate.json`. To change a pin by hand, change it to another exact
+version.
+
 ## Submitting Changes
 
 1. Create a feature branch from `main`.
