@@ -6,13 +6,22 @@ only those package directories — fast enough for pre-commit (<2s).
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from .scanner import Finding, Scanner
+
+# Ask git for the whole file as context. The parsers walk the new side of the
+# diff and attribute each added line to the package block it sits in. With the
+# default three lines, a version bump shows only the changed "version" and
+# "resolved" lines and the package name may not appear in the diff at all.
+_FULL_CONTEXT = '--unified=1000000'
 
 
 def detect_ecosystem(lockfile_path: str) -> str:
@@ -37,14 +46,14 @@ def get_lockfile_diff(lockfile_path: str) -> str:
     """Get the staged diff for a lockfile."""
     try:
         result = subprocess.run(
-            ['git', 'diff', '--cached', '--', lockfile_path],
+            ['git', 'diff', '--cached', _FULL_CONTEXT, '--', lockfile_path],
             capture_output=True, text=True, timeout=30,
         )
         if result.returncode == 0 and result.stdout:
             return result.stdout
         # Fall back to unstaged diff
         result = subprocess.run(
-            ['git', 'diff', '--', lockfile_path],
+            ['git', 'diff', _FULL_CONTEXT, '--', lockfile_path],
             capture_output=True, text=True, timeout=30,
         )
         return result.stdout if result.returncode == 0 else ''
@@ -56,8 +65,10 @@ def parse_changed_packages(diff_text: str, ecosystem: str) -> list[tuple[str, st
     """Parse a lockfile diff to extract (name, version) tuples for added/changed packages."""
     if ecosystem == 'npm':
         return _parse_npm_lockfile_diff(diff_text)
-    elif ecosystem in ('pip', 'poetry'):
+    elif ecosystem == 'pip':
         return _parse_pip_diff(diff_text)
+    elif ecosystem == 'poetry':
+        return _parse_poetry_diff(diff_text)
     elif ecosystem == 'yarn':
         return _parse_yarn_diff(diff_text)
     elif ecosystem == 'pnpm':
@@ -73,26 +84,56 @@ def parse_changed_packages(diff_text: str, ecosystem: str) -> list[tuple[str, st
     return []
 
 
-def _parse_npm_lockfile_diff(diff_text: str) -> list[tuple[str, str]]:
-    """Parse package-lock.json diff for added/changed packages."""
-    packages: list[tuple[str, str]] = []
-    # Look for added lines like: +    "node_modules/express": {
+def _new_side(diff_text: str) -> Iterator[tuple[bool, str]]:
+    """Yield ``(added, text)`` for each line on the new side of a unified diff.
+
+    Removed lines and diff headers are dropped, so the caller sees the
+    lockfile as it stands after the change, with every line marked as added
+    or unchanged.
+    """
     for line in diff_text.splitlines():
-        if not line.startswith('+'):
+        if line.startswith('+++'):
             continue
-        line = line[1:].strip()
-        # Match "node_modules/pkg" or "node_modules/@scope/pkg"
-        if '"node_modules/' in line and '": {' in line:
-            path = line.split('"node_modules/')[1].split('"')[0]
-            packages.append((path, ''))
-        # Note: npm version lines inside package entries are not extracted
-        # since the package name is already captured from the path key above
-    # Deduplicate
+        if line.startswith('+'):
+            yield True, line[1:]
+        elif line.startswith(' '):
+            yield False, line[1:]
+
+
+def _indent(text: str) -> int:
+    return len(text) - len(text.lstrip())
+
+
+_NPM_PACKAGE_KEY_RE = re.compile(r'^(\s*)"node_modules/([^"]+)": \{\s*$')
+
+
+def _parse_npm_lockfile_diff(diff_text: str) -> list[tuple[str, str]]:
+    """Parse a package-lock.json diff for added or changed packages.
+
+    A package counts as changed when any line inside its
+    ``"node_modules/<name>": {`` block was added, which covers both new
+    entries and version bumps of existing ones.
+    """
+    packages: list[tuple[str, str]] = []
+    current: str | None = None
+    current_indent = 0
+    for added, text in _new_side(diff_text):
+        if not text.strip():
+            continue
+        m = _NPM_PACKAGE_KEY_RE.match(text)
+        if m:
+            current, current_indent = m.group(2), len(m.group(1))
+        elif _indent(text) <= current_indent:
+            # The closing brace, the root "" entry, a workspace entry, or
+            # the end of "packages": no longer inside a package block.
+            current = None
+        if added and current is not None:
+            packages.append((current, ''))
     return list(dict.fromkeys(packages))
 
 
 def _parse_pip_diff(diff_text: str) -> list[tuple[str, str]]:
-    """Parse requirements.txt or poetry.lock diff for added packages."""
+    """Parse a requirements.txt diff for added packages."""
     packages: list[tuple[str, str]] = []
     for line in diff_text.splitlines():
         if not line.startswith('+') or line.startswith('+++'):
@@ -109,32 +150,74 @@ def _parse_pip_diff(diff_text: str) -> list[tuple[str, str]]:
             name = content.split('>')[0].split('<')[0].split('!')[0].split('~')[0]
             name = name.split('[')[0].strip().lower()
             packages.append((name, ''))
-        # poetry.lock: name = "package-name"
-        elif content.startswith('name = '):
-            name = content.split('=', 1)[1].strip().strip('"').strip("'")
-            packages.append((name.lower(), ''))
     return list(dict.fromkeys(packages))
 
 
-def _parse_yarn_diff(diff_text: str) -> list[tuple[str, str]]:
-    """Parse yarn.lock diff for added packages."""
+_POETRY_NAME_RE = re.compile(r'^name\s*=\s*["\']([^"\']+)["\']')
+
+
+def _parse_poetry_diff(diff_text: str) -> list[tuple[str, str]]:
+    """Parse a poetry.lock diff for added or changed packages.
+
+    Each ``[[package]]`` table, together with its ``[package.*]`` sub-tables,
+    is one block; a package counts as changed when any line in its block was
+    added.
+    """
     packages: list[tuple[str, str]] = []
-    for line in diff_text.splitlines():
-        if not line.startswith('+') or line.startswith('+++'):
+    current: str | None = None
+    in_header = False  # between "[[package]]" and its first sub-table
+    for added, text in _new_side(diff_text):
+        stripped = text.strip()
+        if not stripped:
             continue
-        content = line[1:].strip()
-        # yarn.lock entries: "package@^version", "package@~version":
-        if content.endswith(':') and '@' in content:
-            # Handle multi-range entries: "lodash@^4.0.0", "lodash@^4.17.0":
-            first_spec = content.rstrip(':').split(',')[0].strip().strip('"').strip("'")
-            # Get package name (before last @)
-            if first_spec.startswith('@'):
-                # Scoped: @scope/name@version
-                rest = first_spec[1:]
-                name = '@' + rest.rsplit('@', 1)[0] if '@' in rest else first_spec
-            else:
-                name = first_spec.rsplit('@', 1)[0]
-            packages.append((name, ''))
+        if stripped == '[[package]]':
+            current, in_header = None, True
+        elif stripped.startswith('['):
+            in_header = False
+            if not stripped.startswith('[package.'):
+                current = None  # [metadata], [extras], ...
+        elif in_header and current is None:
+            m = _POETRY_NAME_RE.match(stripped)
+            if m:
+                current = m.group(1).lower()
+        if added and current is not None:
+            packages.append((current, ''))
+    return list(dict.fromkeys(packages))
+
+
+def _yarn_entry_name(header: str) -> str | None:
+    """Extract the package name from a yarn.lock entry header, if it is one.
+
+    Handles classic (``"lodash@^4.0.0", "lodash@^4.17.0":``) and berry
+    (``"lodash@npm:^4.17.21":``) headers.
+    """
+    header = header.strip()
+    if not header.endswith(':') or '@' not in header:
+        return None
+    spec = header[:-1].split(',')[0].strip().strip('"').strip("'")
+    if '@workspace:' in spec:
+        return None  # the project's own packages, not installed dependencies
+    if spec.startswith('@'):
+        # Scoped: @scope/name@range
+        return '@' + spec[1:].split('@', 1)[0]
+    return spec.split('@', 1)[0]
+
+
+def _parse_yarn_diff(diff_text: str) -> list[tuple[str, str]]:
+    """Parse a yarn.lock diff for added or changed packages.
+
+    An entry runs from its unindented header to the next unindented line; a
+    package counts as changed when any line in its entry was added.
+    """
+    packages: list[tuple[str, str]] = []
+    current: str | None = None
+    for added, text in _new_side(diff_text):
+        if not text.strip():
+            continue
+        if not text[0].isspace():
+            current = _yarn_entry_name(text)
+        if added and current:
+            packages.append((current, ''))
     return list(dict.fromkeys(packages))
 
 

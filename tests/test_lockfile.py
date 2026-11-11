@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import difflib
 import json
 import shutil
 import subprocess
@@ -299,3 +301,280 @@ class TestScanChangedDepsIntegration:
 
         finally:
             self._cleanup()
+
+
+# ---------------------------------------------------------------------------
+# Version bumps: the package name is an unchanged line, only the lines below
+# it change. Diffs are built from before/after lockfiles with full context,
+# which is what get_lockfile_diff() asks git for.
+# ---------------------------------------------------------------------------
+
+def _full_diff(old: str, new: str) -> str:
+    return "\n".join(difflib.unified_diff(
+        old.splitlines(), new.splitlines(), "a/lock", "b/lock",
+        n=1_000_000, lineterm="",
+    ))
+
+
+_NPM_LOCK: dict[str, object] = {
+    "name": "demo",
+    "lockfileVersion": 2,
+    "packages": {
+        "": {"name": "demo", "dependencies": {"express": "^4.18.0"}},
+        "node_modules/@scope/pkg": {"version": "1.0.0", "integrity": "sha512-SSSS"},
+        "node_modules/accepts": {"version": "1.3.8", "integrity": "sha512-AAAA"},
+        "node_modules/express": {
+            "version": "4.18.0",
+            "resolved": "https://registry.npmjs.org/express/-/express-4.18.0.tgz",
+            "integrity": "sha512-EEEE",
+            "dependencies": {"accepts": "~1.3.8"},
+        },
+        "node_modules/express/node_modules/debug": {"version": "2.6.9"},
+    },
+    "dependencies": {
+        "express": {"version": "4.18.0", "requires": {"accepts": "~1.3.8"}},
+    },
+}
+
+
+def _npm_diff(mutate: object) -> str:
+    new = copy.deepcopy(_NPM_LOCK)
+    mutate(new)  # type: ignore[operator]
+    return _full_diff(json.dumps(_NPM_LOCK, indent=2), json.dumps(new, indent=2))
+
+
+class TestNpmVersionBumps:
+    def test_bump_of_existing_package(self) -> None:
+        def bump(lock: dict) -> None:  # type: ignore[type-arg]
+            entry = lock["packages"]["node_modules/express"]
+            entry["version"] = "4.18.2"
+            entry["resolved"] = "https://registry.npmjs.org/express/-/express-4.18.2.tgz"
+            entry["integrity"] = "sha512-FFFF"
+
+        assert parse_changed_packages(_npm_diff(bump), "npm") == [("express", "")]
+
+    def test_change_deep_inside_a_block(self) -> None:
+        def bump(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["packages"]["node_modules/express"]["dependencies"]["accepts"] = "~1.3.9"
+
+        assert parse_changed_packages(_npm_diff(bump), "npm") == [("express", "")]
+
+    def test_bump_of_nested_package(self) -> None:
+        def bump(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["packages"]["node_modules/express/node_modules/debug"]["version"] = "2.6.10"
+
+        assert parse_changed_packages(_npm_diff(bump), "npm") == [
+            ("express/node_modules/debug", ""),
+        ]
+
+    def test_new_package_reports_only_itself(self) -> None:
+        def add(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["packages"]["node_modules/zebra"] = {"version": "1.0.0"}
+
+        assert parse_changed_packages(_npm_diff(add), "npm") == [("zebra", "")]
+
+    def test_root_entry_change_is_not_a_package(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["packages"][""]["dependencies"]["express"] = "^4.18.2"
+
+        assert parse_changed_packages(_npm_diff(edit), "npm") == []
+
+    def test_removed_package_does_not_implicate_its_neighbour(self) -> None:
+        def remove(lock: dict) -> None:  # type: ignore[type-arg]
+            del lock["packages"]["node_modules/accepts"]
+
+        assert parse_changed_packages(_npm_diff(remove), "npm") == []
+
+    def test_legacy_dependencies_section_is_not_the_last_package(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["dependencies"]["express"]["version"] = "4.18.2"
+
+        assert parse_changed_packages(_npm_diff(edit), "npm") == []
+
+
+_YARN_CLASSIC = """\
+# yarn lockfile v1
+
+
+"@babel/core@^7.24.0":
+  version "7.24.0"
+  resolved "https://registry.yarnpkg.com/@babel/core/-/core-7.24.0.tgz#abc"
+  integrity sha512-AAAA
+  dependencies:
+    "@babel/helper" "^7.24.0"
+
+lodash@^4.17.0, lodash@^4.17.20:
+  version "4.17.20"
+  resolved "https://registry.yarnpkg.com/lodash/-/lodash-4.17.20.tgz#def"
+  integrity sha512-BBBB
+"""
+
+_YARN_BERRY = """\
+__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"demo@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "demo@workspace:."
+  dependencies:
+    lodash: "npm:^4.17.20"
+  languageName: unknown
+  linkType: soft
+
+"lodash@npm:^4.17.20, lodash@npm:^4.17.21":
+  version: 4.17.20
+  resolution: "lodash@npm:4.17.20"
+  checksum: 10c0/aaaa
+  languageName: node
+  linkType: hard
+"""
+
+
+class TestYarnVersionBumps:
+    def test_classic_bump(self) -> None:
+        new = _YARN_CLASSIC.replace("4.17.20", "4.17.21").replace("BBBB", "CCCC")
+        # The range in the header also reads 4.17.20; keep the header unchanged.
+        new = new.replace("lodash@^4.17.21:", "lodash@^4.17.20:")
+        assert parse_changed_packages(_full_diff(_YARN_CLASSIC, new), "yarn") == [
+            ("lodash", ""),
+        ]
+
+    def test_classic_scoped_bump(self) -> None:
+        new = _YARN_CLASSIC.replace('version "7.24.0"', 'version "7.24.1"')
+        assert parse_changed_packages(_full_diff(_YARN_CLASSIC, new), "yarn") == [
+            ("@babel/core", ""),
+        ]
+
+    def test_berry_bump(self) -> None:
+        new = _YARN_BERRY.replace("version: 4.17.20", "version: 4.17.21")
+        new = new.replace("lodash@npm:4.17.20", "lodash@npm:4.17.21")
+        assert parse_changed_packages(_full_diff(_YARN_BERRY, new), "yarn") == [
+            ("lodash", ""),
+        ]
+
+    def test_berry_workspace_and_metadata_are_not_packages(self) -> None:
+        new = _YARN_BERRY.replace('lodash: "npm:^4.17.20"', 'lodash: "npm:^4.17.21"')
+        new = new.replace("cacheKey: 10c0", "cacheKey: 10c1")
+        assert parse_changed_packages(_full_diff(_YARN_BERRY, new), "yarn") == []
+
+    def test_alias_resolves_to_installed_name(self) -> None:
+        new = _YARN_CLASSIC + '\n"foo@npm:bar@^1.0.0":\n  version "1.0.0"\n'
+        assert parse_changed_packages(_full_diff(_YARN_CLASSIC, new), "yarn") == [
+            ("foo", ""),
+        ]
+
+
+_POETRY_LOCK = """\
+[[package]]
+name = "certifi"
+version = "2024.2.2"
+description = "Mozilla's CA bundle"
+optional = false
+python-versions = ">=3.6"
+files = [
+    {file = "certifi-2024.2.2-py3-none-any.whl", hash = "sha256:aaaa"},
+]
+
+[[package]]
+name = "Requests"
+version = "2.31.0"
+description = "HTTP for Humans"
+optional = false
+python-versions = ">=3.7"
+files = [
+    {file = "requests-2.31.0-py3-none-any.whl", hash = "sha256:bbbb"},
+]
+
+[package.dependencies]
+certifi = ">=2017.4.17"
+
+[package.extras]
+socks = ["PySocks (>=1.5.6,!=1.5.7)"]
+
+[metadata]
+lock-version = "2.0"
+python-versions = "^3.9"
+content-hash = "cccc"
+"""
+
+
+class TestPoetryVersionBumps:
+    def test_bump(self) -> None:
+        new = _POETRY_LOCK.replace("2.31.0", "2.32.0").replace("bbbb", "dddd")
+        assert parse_changed_packages(_full_diff(_POETRY_LOCK, new), "poetry") == [
+            ("requests", ""),
+        ]
+
+    def test_sub_table_change_belongs_to_its_package(self) -> None:
+        new = _POETRY_LOCK.replace('certifi = ">=2017.4.17"', 'certifi = ">=2023.5.7"')
+        assert parse_changed_packages(_full_diff(_POETRY_LOCK, new), "poetry") == [
+            ("requests", ""),
+        ]
+
+    def test_metadata_change_is_not_a_package(self) -> None:
+        new = _POETRY_LOCK.replace('content-hash = "cccc"', 'content-hash = "eeee"')
+        assert parse_changed_packages(_full_diff(_POETRY_LOCK, new), "poetry") == []
+
+    def test_new_package(self) -> None:
+        new = _POETRY_LOCK.replace(
+            "[metadata]", '[[package]]\nname = "idna"\nversion = "3.7"\n\n[metadata]',
+        )
+        assert parse_changed_packages(_full_diff(_POETRY_LOCK, new), "poetry") == [
+            ("idna", ""),
+        ]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
+class TestVersionBumpIntegration:
+    """A staged bump of an installed package is scanned, in a throwaway repo."""
+
+    def test_staged_bump_is_scanned(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def git(*args: str) -> None:
+            result = _git(
+                "-c", "user.name=test", "-c", "user.email=test@example.invalid",
+                "-c", "commit.gpgsign=false", *args, cwd=tmp_path,
+            )
+            assert result.returncode == 0, result.stderr
+
+        lock = {
+            "name": "demo",
+            "lockfileVersion": 3,
+            "packages": {
+                "": {"name": "demo"},
+                "node_modules/accepts": {"version": "1.3.8"},
+                "node_modules/express": {
+                    "version": "4.18.0",
+                    "resolved": "https://registry.npmjs.org/express/-/express-4.18.0.tgz",
+                    "license": "MIT",
+                    "engines": {"node": ">= 0.10.0"},
+                    "integrity": "sha512-EEEE",
+                },
+            },
+        }
+        lockfile = tmp_path / "package-lock.json"
+        lockfile.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        git("init", "-q")
+        git("add", "package-lock.json")
+        git("commit", "-q", "-m", "base")
+
+        for name in ("accepts", "express"):
+            pkg = tmp_path / "node_modules" / name
+            pkg.mkdir(parents=True)
+            (pkg / "index.js").write_text(
+                'const payload = `\uFE00\uFE01\uFE02`;\n', encoding="utf-8",
+            )
+
+        # Only a line well below the package name changes, so the name is
+        # outside git's default three lines of context.
+        lock["packages"]["node_modules/express"]["integrity"] = "sha512-FFFF"  # type: ignore[index]
+        lockfile.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        git("add", "package-lock.json")
+
+        monkeypatch.chdir(tmp_path)
+        findings = scan_changed_deps(["package-lock.json"], Scanner(scan_deps=True))
+
+        assert len(findings) == 3
+        assert {f.package for f in findings} == {"express"}
