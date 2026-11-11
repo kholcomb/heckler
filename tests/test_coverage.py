@@ -6,7 +6,10 @@ Characters are built with chr() so this file contains none of them.
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -204,3 +207,81 @@ class TestShellFallback:
         extra = sorted(in_script - reported)
         assert [f"U+{cp:04X}" for cp in missing] == [], "in the Python scanner but not the script"
         assert [f"U+{cp:04X}" for cp in extra] == [], "in the script but not the Python scanner"
+
+
+def _grep_supports_pcre() -> bool:
+    if os.name == "nt" or shutil.which("bash") is None or shutil.which("grep") is None:
+        return False
+    try:
+        probe = subprocess.run(
+            ["grep", "-P", "x"], input="x\n", capture_output=True, text=True, timeout=10
+        )
+    except OSError:
+        return False
+    return probe.returncode == 0
+
+
+@pytest.mark.skipif(not _grep_supports_pcre(), reason="needs bash and a grep with -P")
+class TestShellFallbackRuns:
+    """Run the script itself on small files written here."""
+
+    SCRIPT = REPO_ROOT / "scripts" / "heckler-scan.sh"
+
+    def _run(self, directory: Path, **env: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", str(self.SCRIPT), str(directory)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env={**os.environ, **env},
+        )
+
+    def test_clean_directory_passes(self, tmp_path: Path) -> None:
+        text = "x = 1\n# caf" + chr(0xE9) + "\ttab\n" + chr(0x0C) + "\ny = 2\r\n"
+        (tmp_path / "ok.py").write_text(text, encoding="utf-8")
+        result = self._run(tmp_path)
+        assert result.returncode == 0, result.stdout
+
+    @pytest.mark.parametrize(
+        "cp",
+        [0x200B, 0x202E, 0xFE01, 0x180F, 0x2028, 0x3000, 0xE0041, 0xE0FFF, 0x1BCA0, 0x1B, 0x85],
+    )
+    def test_each_kind_of_character_is_reported(self, tmp_path: Path, cp: int) -> None:
+        (tmp_path / "sample.js").write_text("v = 'a" + chr(cp) + "b'\n", encoding="utf-8")
+        result = self._run(tmp_path)
+        assert result.returncode == 1
+        assert "sample.js" in result.stdout
+
+    def test_nul_byte_does_not_hide_the_file(self, tmp_path: Path) -> None:
+        (tmp_path / "hidden.js").write_bytes(
+            b"// header" + bytes([0]) + b"\n" + ("v = 'a" + chr(0x200B) + "b'\n").encode()
+        )
+        result = self._run(tmp_path)
+        assert result.returncode == 1
+        assert "hidden.js" in result.stdout
+
+    def test_output_cannot_drive_the_terminal(self, tmp_path: Path) -> None:
+        (tmp_path / "colour.py").write_text(
+            "print('" + chr(0x1B) + "[2K gone')\n", encoding="utf-8"
+        )
+        result = self._run(tmp_path)
+        assert result.returncode == 1
+        assert chr(0x1B) not in result.stdout
+        assert "^[[2K" in result.stdout
+
+    def test_long_listing_does_not_break_the_pipe(self, tmp_path: Path) -> None:
+        line = "padding " * 20 + chr(0x200B) + "\n"
+        (tmp_path / "many.js").write_text(line * 3000, encoding="utf-8")
+        result = self._run(tmp_path)
+        assert result.returncode == 1
+        assert "(3000 occurrence(s))" in result.stdout
+        assert "... and 2950 more." in result.stdout
+
+    def test_non_utf8_locale_is_never_reported_clean(self, tmp_path: Path) -> None:
+        (tmp_path / "sample.js").write_text("v = 'a" + chr(0x200B) + "b'\n", encoding="utf-8")
+        result = self._run(tmp_path, LC_ALL="C", LANG="C")
+        # Either the script switched to a UTF-8 locale and found it, or it
+        # refused to run. What it must not do is pass.
+        assert result.returncode in (1, 2)
+        if result.returncode == 2:
+            assert "locale" in result.stderr

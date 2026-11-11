@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--diff-only` detects version bumps of existing packages in `package-lock.json`, `yarn.lock` and `poetry.lock`, not only newly added packages
 - Dependency constraints in `poetry.lock` are no longer read as package names
 - Inline `# comments` in `.heckler.yml` are no longer read as part of the value when PyYAML is not installed
+- `scripts/heckler-scan.sh` no longer reports a clean result when it could not check: it skipped any file containing a NUL byte, and in a non-UTF-8 locale `grep` rejected the pattern and the error was discarded
+- `scripts/heckler-scan.sh` spells out control characters in its listing instead of printing them raw, and no longer dies with a broken pipe on long listings
 
 ### Security
 
