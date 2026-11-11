@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import os
 import re
+import stat
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +13,7 @@ from pathlib import Path
 from .characters import (
     _KEYCAP_BASES,
     _ZERO_WIDTH_JOINER,
+    DANGEROUS_NON_CONTROL_RE,
     DANGEROUS_UNICODE_RE,
     PRESENTATION_SELECTORS,
     CharInfo,
@@ -292,7 +294,8 @@ _MAX_FINDINGS_PER_FILE = 10_000
 
 # Maximum file size to scan (50 MB). A larger file is not read, to prevent
 # memory exhaustion from adversarially large inputs. It is recorded in
-# Scanner.skipped, because a file nobody looked at is not a clean one.
+# Scanner.skipped, because a file nobody looked at is not a clean one, or in
+# Scanner.binary when its start looks binary.
 _MAX_SCAN_FILE_SIZE = 50 * 1024 * 1024
 
 # BOM signatures ordered longest-first so UTF-32 is checked before UTF-16.
@@ -326,9 +329,44 @@ _CONTROL_BYTES = bytes(b for b in range(0x20) if b not in b"\t\n\x0c\r\x1b")
 # higher still; a text file with a stray NUL in it is far below.
 _TEXT_RATIO = 32
 
-# The second reading of a file whose byte order mark is believed reports
-# nothing below this code point. See Scanner.scan_file().
-_BELIEVED_BOM_FLOOR = 0xA0
+# Fewer control bytes than this never make a file look binary, whatever
+# share of it they are. One byte is more than one in 32 of a file shorter
+# than that, and no single byte decides how a file is read.
+_MIN_CONTROL_BYTES = 2
+
+# The start of a file is not all of it, and padding there costs little: 260
+# control bytes in the first comment of a script made it look binary. So a
+# file that looks binary is read in full before it is left out, and is left
+# out only when more than one byte in this many, over the whole of it, is a
+# control byte or invalid UTF-8. A file with less than that is mostly text,
+# and is scanned for the text inside it.
+#
+# This is where the reading stops. A file that is more than a quarter junk
+# is binary, whatever text it also holds: it is left out and named in the
+# report. Hiding text that way takes junk on the scale of the file, and what
+# an image, an archive or an executable holds is not looked at.
+_MOSTLY_TEXT_RATIO = 4
+
+# In a file that looks binary and is mostly text, what is scanned is each
+# run of at least this many characters that decode as UTF-8, or the whole
+# file when all of it does.
+#
+# What ends a run is a byte that is not UTF-8, and nothing else. A control
+# byte does not, NUL included: one on each side of a flagged character would
+# cut it out of the text, and they show in a diff as little as the character
+# does. A byte that is not UTF-8 shows as a replacement glyph wherever the
+# file is displayed, so hiding a character behind one costs the attack the
+# invisibility it is after, and each one counts towards the quarter above.
+#
+# The length keeps chance out. Bytes that are not text spell a flagged code
+# point now and then: about 70 times per MB in random bytes, nearly always
+# with an invalid byte a few characters away. Measured over 1 GB of them, a
+# run of 16 would still report two in 50 MB, and a run of 32 none at all.
+_MIN_TEXT_RUN = 32
+_TEXT_RUN_RE = re.compile(f"[^{_REPLACEMENT}]{{{_MIN_TEXT_RUN},}}")
+
+# How a finding from that reading is marked.
+_LOOKS_BINARY = "in a file that looks binary"
 
 
 def _control_bytes(data: bytes) -> int:
@@ -336,14 +374,18 @@ def _control_bytes(data: bytes) -> int:
     return len(data) - len(data.translate(None, _CONTROL_BYTES))
 
 
-def _is_utf8_text(data: bytes) -> bool:
+def _is_utf8_text(data: bytes, ratio: int = _TEXT_RATIO) -> bool:
     """False if too much of *data* is control bytes or invalid UTF-8 to be text.
 
-    It takes a share of the bytes to say so. A single NUL proves nothing:
-    putting one in a comment costs one byte.
+    Too much is more than one byte in *ratio*. It takes a share of the
+    bytes to say so. A single NUL proves nothing: putting one in a comment
+    costs one byte.
     """
+    controls = _control_bytes(data)
+    if controls * ratio > len(data):
+        return False  # settled, without decoding what may be 50 MB
     invalid = data.decode("utf-8", errors="replace").count(_REPLACEMENT)
-    return (_control_bytes(data) + invalid) * _TEXT_RATIO <= len(data)
+    return (controls + invalid) * ratio <= len(data)
 
 
 def _detect_bom_encoding(raw: bytes) -> str | None:
@@ -427,22 +469,66 @@ def _guess_bomless_utf32(head: bytes) -> str | None:
     return None
 
 
-def _other_readings(raw: bytes, bom_codec: str | None, believed: bool) -> list[tuple[str, int]]:
+def _other_readings(raw: bytes, bom_codec: str | None, believed: bool) -> list[tuple[str, bool]]:
     """What to scan a file as besides the encoding it presents itself in.
 
-    Each reading is a codec and the lowest code point to report from it.
-    *believed* says whether the content matches *bom_codec*.
+    Each reading is a codec and whether control characters are reported
+    from it. *believed* says whether the content matches *bom_codec*.
     """
     if bom_codec is None:
         head = raw[:_BINARY_CHECK_SIZE]
         guess = _guess_bomless_utf32(head) or _guess_bomless_utf16(head, _UTF16_HIGH_BYTES)
-        return [(guess, 0)] if guess else []
+        return [(guess, True)] if guess else []
     if believed:
-        return [("utf-8", _BELIEVED_BOM_FLOOR)]
+        return [("utf-8", False)]
     if bom_codec == "utf-32-le":
         # FF FE 00 00 is also the UTF-16 BOM followed by a NUL character.
-        return [("utf-8", 0), ("utf-16-le", 0)]
-    return [("utf-8", 0)]
+        return [("utf-8", True), ("utf-16-le", True)]
+    return [("utf-8", True)]
+
+
+def _text_inside(decoded: str) -> str | None:
+    """What there is to scan in a file that looks binary, or None for nothing.
+
+    *decoded* is the file read as UTF-8, with U+FFFD for each byte that is
+    not. The result is its text runs, each where it is in the file: what
+    lies between two of them is cut down to its line breaks and to its
+    length on the lines it shares with a run. A scan of the result reports
+    what is in the runs and nothing else, at the line and column a finding
+    has in the file. A run with nothing in it to report is treated like
+    what is not text, and nothing is kept of what follows the last run.
+    """
+    if _REPLACEMENT not in decoded:
+        return decoded  # all of it is UTF-8, so all of it is one run
+    pieces: list[str] = []
+    done = 0  # how much of *decoded* is in pieces
+    for run in _TEXT_RUN_RE.finditer(decoded):
+        if DANGEROUS_NON_CONTROL_RE.search(decoded, run.start(), run.end()):
+            pieces.append(_outline(decoded, done, run.start()))
+            pieces.append(run.group())
+            done = run.end()
+    return "".join(pieces) if pieces else None
+
+
+def _outline(decoded: str, start: int, end: int) -> str:
+    """A stand-in for ``decoded[start:end]`` with nothing in it to report.
+
+    It has as many line breaks, as many characters before the first of them
+    and as many after the last, so what comes after it stays on the line
+    and in the column where it was.
+    """
+    if not _LINE_BREAK_RE.search(decoded, start, end):
+        return _REPLACEMENT * (end - start)
+    line_feed, carriage_return = decoded.find("\n", start, end), decoded.find("\r", start, end)
+    first = min(at for at in (line_feed, carriage_return) if at != -1)
+    last = max(decoded.rfind("\n", start, end), decoded.rfind("\r", start, end))
+    # CR LF is one line break, as it is for _LINE_BREAK_RE.
+    breaks = (
+        decoded.count("\n", start, end)
+        + decoded.count("\r", start, end)
+        - decoded.count("\r\n", start, end)
+    )
+    return _REPLACEMENT * (first - start) + "\n" * breaks + _REPLACEMENT * (end - last - 1)
 
 
 def _varied_presentations(text: str, styled: dict[tuple[str, int], int]) -> int:
@@ -460,10 +546,15 @@ def _varied_presentations(text: str, styled: dict[tuple[str, int], int]) -> int:
     return varied
 
 
-def _label_reading(findings: list[Finding], codec: str) -> None:
-    """Mark findings as coming from one of several decodings of a file."""
+def _label_reading(findings: list[Finding], reading: str) -> None:
+    """Mark findings with the reading of the file they come from, where it is not the plain one."""
     for finding in findings:
-        finding.char_name = f"{finding.char_name} (read as {_ENCODING_LABELS[codec]})"
+        finding.char_name = f"{finding.char_name} ({reading})"
+
+
+def _read_as(codec: str) -> str:
+    """The label for findings from one of several decodings of a file."""
+    return f"read as {_ENCODING_LABELS[codec]}"
 
 
 def _is_script(filepath: Path) -> bool:
@@ -473,6 +564,19 @@ def _is_script(filepath: Path) -> bool:
             return f.read(2) == b"#!"
     except OSError:
         return False
+
+
+def _is_regular_file(filepath: Path) -> bool:
+    """False for a named pipe, a socket or a device, which a walk does not open.
+
+    Opening a pipe waits until something writes to it, and nothing may.
+    """
+    try:
+        return stat.S_ISREG(os.lstat(filepath).st_mode)
+    except OSError:
+        # Not known to be anything else. Reading it will fail too, and that
+        # is recorded.
+        return True
 
 
 def _is_known_name(name: str) -> bool:
@@ -514,8 +618,9 @@ class Scanner:
     #: Directories that were not entered because of their name, other than
     #: version control data and tool caches.
     skipped_dirs: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
-    #: Files left out because they hold too many control bytes to be text.
-    #: A file whose name marks it as source is never one of them.
+    #: Files left out as binary: more than a quarter of the file is control
+    #: bytes or invalid UTF-8, or its start looks binary and it is too large
+    #: to read. A file whose name marks it as source is never one of them.
     binary: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -524,15 +629,24 @@ class Scanner:
 
     def scan_text(self, text: str, filename: str = "<string>") -> list[Finding]:
         """Scan a text string for dangerous Unicode. The core primitive."""
-        return self._scan_text(text, filename, 0)
+        return self._scan_text(text, filename)
 
-    def _scan_text(self, text: str, filename: str, floor: int) -> list[Finding]:
-        """scan_text(), reporting only code points from *floor* up."""
+    def _scan_text(
+        self, text: str, filename: str, *, controls: bool = True, directives: bool = True
+    ) -> list[Finding]:
+        """scan_text() for one reading of a file.
+
+        Without *controls*, control characters are not reported, which
+        leaves U+00A0 and up. Without *directives*, no suppression directive
+        is honoured, whatever the scanner is set to.
+        """
         findings: list[Finding] = []
         source, package = self._classify_path(filename)
         # Never honor suppression directives in dependency code —
         # a malicious package author could embed them to hide attacks.
         honor = self.honor_directives and source != "dependency" and not self.scan_deps
+        honor = honor and directives
+        flagged = DANGEROUS_UNICODE_RE if controls else DANGEROUS_NON_CONTROL_RE
         nul_seen = False
 
         # What a directive covers on the current line: the codepoints it
@@ -587,10 +701,8 @@ class Scanner:
 
             emoji_selectors = 0
             first_emoji_selector = -1
-            for match in DANGEROUS_UNICODE_RE.finditer(line):
+            for match in flagged.finditer(line):
                 cp = ord(match.group()[0])
-                if cp < floor:
-                    continue
                 # BOM at file start is typically legitimate
                 if cp == 0xFEFF and line_num == 1 and match.start() == 0 and self.allow_bom:
                     continue
@@ -677,15 +789,8 @@ class Scanner:
         and is recorded in ``skipped``.
         """
         name = str(filepath)
-        try:
-            size = filepath.stat().st_size
-            if size > _MAX_SCAN_FILE_SIZE:
-                limit = _MAX_SCAN_FILE_SIZE // (1024 * 1024)
-                self.skipped.append((name, f"it is larger than {limit} MB"))
-                return []
-            raw = filepath.read_bytes()
-        except OSError as e:
-            self.skipped.append((name, f"it could not be read ({e.strerror or e})"))
+        raw = self._read(filepath)
+        if raw is None:
             return []
 
         # Detect non-UTF-8 encodings via BOM signatures.  UTF-16/32 files
@@ -717,13 +822,67 @@ class Scanner:
         # some CJK ones.
         believed = bom_codec is not None and _bom_matches_content(raw, bom_codec)
         if bom_codec and not believed:
-            _label_reading(findings, bom_codec)
+            _label_reading(findings, _read_as(bom_codec))
             findings[:0] = self._bom_mismatch(name, bom_codec)
-        for codec, floor in _other_readings(raw, bom_codec, believed):
-            reading = self._scan_text(raw.decode(codec, errors="replace"), name, floor)
-            _label_reading(reading, codec)
+        for codec, controls in _other_readings(raw, bom_codec, believed):
+            decoded = raw.decode(codec, errors="replace")
+            reading = self._scan_text(decoded, name, controls=controls)
+            _label_reading(reading, _read_as(codec))
             findings.extend(reading)
         return findings
+
+    def _scan_text_inside(self, filepath: Path) -> list[Finding]:
+        """Scan a file whose start looks binary, unless all of it says the same.
+
+        What the start of a file looks like is up to whoever wrote it:
+        padding in the first comment of a script is enough. So the whole
+        file is read. If more than a quarter of it is control bytes and
+        invalid UTF-8 (see ``_MOSTLY_TEXT_RATIO``), it is binary, and is left
+        out and recorded in ``binary``. Text inside a file like that is not
+        scanned.
+
+        Otherwise the file is mostly text, and every run of text in it is
+        scanned (see ``_MIN_TEXT_RUN``): without control characters, which
+        the padding is made of, and without suppression directives, since
+        git shows no diff for a file it takes for binary and nobody reviews
+        a directive in one.
+
+        A file too large to read is left out as binary too. It is recorded
+        in ``binary`` and not in ``skipped``, so the large media files of a
+        repository do not fail a run.
+        """
+        raw = self._read(filepath, looks_binary=True)
+        if raw is None:
+            return []
+        if not _is_utf8_text(raw, _MOSTLY_TEXT_RATIO):
+            self.binary.append(str(filepath))
+            return []
+        # Everything that is reported from this reading is U+00A0 or above,
+        # and none of that is in ASCII.
+        if raw.isascii():
+            return []
+        text = _text_inside(raw.decode("utf-8", errors="replace"))
+        if text is None:
+            return []
+        findings = self._scan_text(text, str(filepath), controls=False, directives=False)
+        _label_reading(findings, _LOOKS_BINARY)
+        return findings
+
+    def _read(self, filepath: Path, looks_binary: bool = False) -> bytes | None:
+        """The bytes of a file, or None, with the reason recorded, if it was not read."""
+        name = str(filepath)
+        try:
+            if filepath.stat().st_size > _MAX_SCAN_FILE_SIZE:
+                if looks_binary:
+                    self.binary.append(name)
+                else:
+                    limit = _MAX_SCAN_FILE_SIZE // (1024 * 1024)
+                    self.skipped.append((name, f"it is larger than {limit} MB"))
+                return None
+            return filepath.read_bytes()
+        except OSError as e:
+            self.skipped.append((name, f"it could not be read ({e.strerror or e})"))
+            return None
 
     def _bom_mismatch(self, filename: str, codec: str) -> list[Finding]:
         """The finding for a byte order mark that the content does not match."""
@@ -738,8 +897,13 @@ class Scanner:
         source, package = self._classify_path(filename)
         return [Finding.from_match(filename, 1, 1, 0xFEFF, info, "", source, package)]
 
-    def scan_path(self, root: Path) -> list[Finding]:
-        """Recursively scan a directory or single file."""
+    def scan_path(self, root: Path, *, by_content: bool = False) -> list[Finding]:
+        """Recursively scan a directory or single file.
+
+        A file passed by name is scanned whatever it holds. With
+        *by_content*, or with ``skip_binary`` set, it is treated as a
+        directory walk treats it, and left out when its content is binary.
+        """
         extensions = self._source_extensions()
         if root.is_file():
             # A file named on the command line (which is how pre-commit passes
@@ -747,9 +911,8 @@ class Scanner:
             # same thing whether heckler walks a directory or is handed files.
             if self._is_excluded(root):
                 return []
-            if self.skip_binary and not self.is_text_file(root, extensions):
-                self.binary.append(str(root))
-                return []
+            if self.skip_binary or by_content:
+                return self._scan_by_content(root, extensions)
             return self.scan_file(root)
         if not root.is_dir():
             reason = "it is not a file or a directory" if root.exists() else "it does not exist"
@@ -782,15 +945,25 @@ class Scanner:
                 fpath = dp / fname
                 if os.path.islink(fpath) or self._is_excluded(fpath):
                     continue
-                if code_only:
-                    wanted = self.is_dependency_source(fpath)
-                else:
-                    wanted = self.is_text_file(fpath, extensions)
-                    if not wanted:
-                        self.binary.append(str(fpath))
-                if wanted:
+                if not _is_regular_file(fpath):
+                    # Named and left shut, before anything below opens it.
+                    self.skipped.append((str(fpath), "it is not a regular file"))
+                elif not code_only:
+                    all_findings.extend(self._scan_by_content(fpath, extensions))
+                elif self.is_dependency_source(fpath):
                     all_findings.extend(self.scan_file(fpath))
         return all_findings
+
+    def _scan_by_content(self, filepath: Path, extensions: frozenset[str]) -> list[Finding]:
+        """Scan a file as a directory walk does, or leave it out as binary.
+
+        As text when its name marks it as source or its start is text. A
+        file whose start looks binary is read in full, and is scanned for
+        the text inside it unless the whole of it is binary.
+        """
+        if self.is_text_file(filepath, extensions):
+            return self.scan_file(filepath)
+        return self._scan_text_inside(filepath)
 
     def scan_paths(self, paths: list[Path]) -> list[Finding]:
         """Scan multiple paths (files or directories)."""
@@ -852,13 +1025,14 @@ class Scanner:
 
     @staticmethod
     def is_text_file(filepath: Path, extensions: frozenset[str] = DEFAULT_TEXT_EXTENSIONS) -> bool:
-        """Whether a directory walk scans a file.
+        """Whether a directory walk scans a file as text.
 
-        Every file is scanned unless its content is binary; that is the only
-        way to leave out images, archives and the like. A name that marks
-        the file as source (one of *extensions*, or a well-known file name)
-        is scanned whatever it holds, so nothing written into such a file
-        can opt it out.
+        It does unless the start of the file looks binary, as images,
+        archives and the like do. A name that marks the file as source (one
+        of *extensions*, or a well-known file name) is scanned as text
+        whatever it holds, so nothing written into such a file can opt it
+        out. A file this is false for is not left out yet: the walk reads
+        it in full, and scans the text inside it when it is mostly text.
         """
         return Scanner._is_source_name(filepath, extensions) or not Scanner._is_binary(filepath)
 
@@ -887,11 +1061,12 @@ class Scanner:
     def _is_binary(filepath: Path) -> bool:
         """Whether the start of a file is too full of control bytes to be text.
 
-        One NUL does not make a file binary, or a single byte would be
-        enough to opt a script out of the scan. A file that starts with
-        ``#!`` is a script whatever else it holds, since that is how the
-        kernel runs it. UTF-16 and UTF-32 text is full of NUL bytes, so a
-        BOM for either, or the byte pattern of UTF-16, counts as text.
+        One NUL does not make a file binary, however short the file is, or
+        a single byte would be enough to change how a script is read. A file
+        that starts with ``#!`` is a script whatever else it holds, since
+        that is how the kernel runs it. UTF-16 and UTF-32 text is full of
+        NUL bytes, so a BOM for either, or the byte pattern of UTF-16,
+        counts as text.
         """
         try:
             with open(filepath, "rb") as f:
@@ -902,7 +1077,8 @@ class Scanner:
             return False
         if chunk.startswith(b"#!") or _detect_bom_encoding(chunk) or _guess_bomless_utf16(chunk):
             return False
-        return _control_bytes(chunk) * _TEXT_RATIO > len(chunk)
+        controls = _control_bytes(chunk)
+        return controls >= _MIN_CONTROL_BYTES and controls * _TEXT_RATIO > len(chunk)
 
 
 def _glob_match(path: str, pattern: str) -> bool:

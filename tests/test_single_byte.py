@@ -213,11 +213,30 @@ class TestNulInAFileWithANameThatSaysNothing:
         assert set(names) == {"Escape"}
         assert binary == []
 
+    @pytest.mark.parametrize("control", [b"\x00", b"\x01"], ids=["NUL", "U+0001"])
+    @pytest.mark.parametrize("size", [1, 2, 16, 31])
+    def test_one_control_byte_in_a_tiny_file(
+        self, tmp_path: Path, control: bytes, size: int
+    ) -> None:
+        """A 31-byte file with one NUL was left out: one byte in 31 is more than one in 32."""
+        (tmp_path / "cli").write_bytes(control + b"# a comment that says nothing\n"[: size - 1])
+        assert (tmp_path / "cli").stat().st_size == size
+        names, binary = self._scan(tmp_path)
+        assert names == ["Null" if control == b"\x00" else "Control Character U+0001"]
+        assert binary == []
+
+    def test_tiny_file_with_a_nul_is_scanned_as_text(self, tmp_path: Path) -> None:
+        body = b"\x00" + f"# 'a{ZWSP}b' ".encode().ljust(30, b"#")
+        assert len(body) == 31
+        (tmp_path / "cli").write_bytes(body)
+        names, _binary = self._scan(tmp_path)
+        assert names == ["Null", "Zero Width Space"]
+
     @pytest.mark.parametrize(
         "content",
         [
             b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 16,
-            b"\x7fELF" + b"\x00" * 60 + b"text " * 100,
+            b"\x7fELF" + b"\x00" * 600 + b"text " * 100,
             b"PK\x03\x04" + bytes(range(256)) * 4,
         ],
         ids=["png", "elf", "zip"],
@@ -229,19 +248,32 @@ class TestNulInAFileWithANameThatSaysNothing:
         assert names == []
         assert binary == ["blob"]
 
+    def test_mostly_text_behind_a_binary_header_is_scanned(self, tmp_path: Path) -> None:
+        """A header and 60 NUL bytes in front of 500 bytes of text.
+
+        The start looks binary, and that used to leave the text out. Over
+        the whole file the NUL bytes are a tenth, so it is mostly text.
+        """
+        content = b"\x7fELF" + b"\x00" * 60 + b"text " * 100
+        (tmp_path / "blob").write_bytes(content + chr(0xA0).encode() * 10)
+        names, binary = self._scan(tmp_path)
+        assert names == ["No-Break Space (in a file that looks binary)"] * 10
+        assert binary == []
+
     def test_recognised_name_is_not_recorded_as_binary(self, tmp_path: Path) -> None:
         (tmp_path / "blob.js").write_bytes(b"\x00" * 200)
         names, binary = self._scan(tmp_path)
         assert names == ["Null"]
         assert binary == []
 
-    def test_cli_says_how_many_files_it_left_out(
+    def test_cli_names_the_files_it_left_out(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         (tmp_path / "blob").write_bytes(b"\x00" * 200)
         (tmp_path / "ok.txt").write_text("fine\n", encoding="utf-8")
         assert main(["--ci", str(tmp_path)]) == 0
-        assert "1 file(s) look binary and were not scanned" in capsys.readouterr().err
+        note = f"Note: not scanned, binary by content: {tmp_path / 'blob'}."
+        assert note in capsys.readouterr().err
 
     def test_cli_says_nothing_when_nothing_was_left_out(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

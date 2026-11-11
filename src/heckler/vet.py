@@ -364,17 +364,41 @@ _MAX_EXTRACT_SIZE = 50 * 1024 * 1024
 _MAX_TOTAL_SIZE = 500 * 1024 * 1024
 
 
+def _check_tar_sizes(tf: tarfile.TarFile) -> None:
+    """Refuse an archive whose members declare more than heckler will unpack.
+
+    The size in a member's header is what unpacking writes for it, so the
+    headers settle this before anything is written. They are read one at a
+    time and the first one over a limit ends it, so an archive made to be
+    huge is not walked to its end.
+    """
+    total_size = 0
+    for member in tf:
+        if member.size < 0:
+            # A header can say so, and it would come off the total.
+            raise _UnsafeArchiveError(f"Invalid size ({member.size} bytes): {member.name}")
+        if member.size > _MAX_EXTRACT_SIZE:
+            raise _UnsafeArchiveError(f"File too large ({member.size} bytes): {member.name}")
+        total_size += member.size
+        if total_size > _MAX_TOTAL_SIZE:
+            raise _UnsafeArchiveError(f"Total extraction size exceeds {_MAX_TOTAL_SIZE} bytes")
+
+
 def _safe_tar_extract(archive_path: Path, extract_dir: Path, resolved_root: Path) -> None:
-    """Extract a tar archive with path traversal and symlink protection."""
+    """Extract a tar archive with path traversal, symlink and size protection."""
     with tarfile.open(archive_path) as tf:
-        # filter='data' handles this natively. Python 3.11 has it from
-        # 3.11.4; before that, we validate manually.
         try:
-            tf.extractall(extract_dir, filter="data")
-            return
-        except TypeError:
-            # filter parameter not supported (Python 3.11.0 to 3.11.3)
-            pass
+            # On every Python: filter='data' looks at where a member goes
+            # and what kind it is, not at how large it is.
+            _check_tar_sizes(tf)
+            # filter='data' handles the rest natively. Python 3.11 has it
+            # from 3.11.4; before that, we validate manually.
+            try:
+                tf.extractall(extract_dir, filter="data")
+                return
+            except TypeError:
+                # filter parameter not supported (Python 3.11.0 to 3.11.3)
+                pass
         except tarfile.TarError as e:
             # filter='data' raises FilterError subclasses for
             # path traversal, symlinks, etc. Wrap as our error type.
@@ -382,7 +406,6 @@ def _safe_tar_extract(archive_path: Path, extract_dir: Path, resolved_root: Path
 
         # Manual safe extraction for a Python without the filter
         members = tf.getmembers()
-        total_size = 0
         for member in members:
             _validate_archive_member(member.name, resolved_root, extract_dir)
 
@@ -390,11 +413,6 @@ def _safe_tar_extract(archive_path: Path, extract_dir: Path, resolved_root: Path
                 raise _UnsafeArchiveError(f"Archive contains symlink/hardlink: {member.name}")
             if member.isdev():
                 raise _UnsafeArchiveError(f"Archive contains device file: {member.name}")
-            if member.size > _MAX_EXTRACT_SIZE:
-                raise _UnsafeArchiveError(f"File too large ({member.size} bytes): {member.name}")
-            total_size += member.size
-            if total_size > _MAX_TOTAL_SIZE:
-                raise _UnsafeArchiveError(f"Total extraction size exceeds {_MAX_TOTAL_SIZE} bytes")
 
         # Safe to extract — reuse validated member list
         safe_members = [m for m in members if m.isfile() or m.isdir()]

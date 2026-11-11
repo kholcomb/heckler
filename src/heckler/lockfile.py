@@ -962,8 +962,10 @@ def _distribution_files(
     a package directory or a ``.py`` module. That is not the empty list,
     which is a distribution that installed files and none worth scanning.
 
-    With *all_text* (``--all-text``) every listed file that is not binary is
-    returned, not only those with a source extension.
+    With *all_text* (``--all-text``) every listed file is returned, not only
+    those with a source extension. Which of them is binary is left to the
+    scanner, which reads a file in full before it says so and records the
+    ones it leaves out.
     """
     record = metadata / "RECORD"
     if record.is_file():
@@ -982,8 +984,7 @@ def _distribution_files(
             if not path.is_file():
                 continue
             installed = True
-            wanted = Scanner.is_text_file(path) if all_text else Scanner.is_dependency_source(path)
-            if wanted:
+            if all_text or Scanner.is_dependency_source(path):
                 files.append(path)
         return files if installed else None
 
@@ -1071,9 +1072,11 @@ def resolve_package(
     it was found in. Where there is more than one, what each of them lists
     is scanned.
 
-    *all_text* is ``--all-text``: return every text file a Python
-    distribution installed, rather than the ones with a source extension.
-    Directories are filtered by the scanner either way.
+    *all_text* is ``--all-text``: return every file a Python distribution
+    installed, rather than the ones with a source extension. Scan those with
+    ``Scanner.scan_path(target, by_content=True)``, which leaves out the
+    binary ones as a directory walk does. Directories are filtered by the
+    scanner either way.
     """
     _installed_distributions.cache_clear()  # what is installed now, not at the last call
     return _locate_package(pkg_name, version, ecosystem, lockfile_path, all_text)
@@ -1151,7 +1154,10 @@ def scan_changed_deps(
             # directory and the other a file in it; a finding is reported once.
             reported: set[tuple[str, int, int, int, str]] = set()
             for target in targets:
-                for f in scanner.scan_path(target):
+                # With --all-text a target can be any file the package
+                # installed, compiled ones included. The scanner leaves out
+                # the binary ones, as it does in a directory walk.
+                for f in scanner.scan_path(target, by_content=all_text):
                     key = (f.file, f.line, f.column, f.codepoint, f.char_name)
                     if key in reported:
                         continue

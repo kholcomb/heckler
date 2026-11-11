@@ -12,8 +12,8 @@ from .config import Config, ConfigError, load_config
 from .formatters import get_formatter
 from .scanner import Finding, Scanner
 
-# How many skipped directories a note names before it counts the rest.
-_MAX_DIRS_NAMED = 5
+# How many skipped directories or files a note names before it counts the rest.
+_MAX_PATHS_NAMED = 5
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -231,20 +231,24 @@ def _finish(
     return 0
 
 
+def _name_some(paths: list[str]) -> str:
+    """The first few of *paths*, and how many more there are."""
+    named = ", ".join(paths[:_MAX_PATHS_NAMED])
+    more = len(paths) - _MAX_PATHS_NAMED
+    return f"{named} and {more} more" if more > 0 else named
+
+
 def _report_suppressions(scanner: Scanner) -> None:
     """Say what the scan left out or held back, so that it is never nothing."""
     if scanner.skipped_dirs:
-        named = ", ".join(scanner.skipped_dirs[:_MAX_DIRS_NAMED])
-        more = len(scanner.skipped_dirs) - _MAX_DIRS_NAMED
-        if more > 0:
-            named += f" and {more} more"
+        named = _name_some(scanner.skipped_dirs)
         advice = "" if scanner.scan_deps else " --scan-deps scans dependency directories."
         print(f"Note: not scanned, skipped by directory name: {named}.{advice}", file=sys.stderr)
     if scanner.binary:
-        print(
-            f"Note: {len(scanner.binary)} file(s) look binary and were not scanned.",
-            file=sys.stderr,
-        )
+        # By name, so that a file made to be one of these can be told from
+        # the images and archives that are expected.
+        named = _name_some(scanner.binary)
+        print(f"Note: not scanned, binary by content: {named}.", file=sys.stderr)
     if scanner.suppressed:
         print(
             f"Note: {sum(scanner.suppressed.values())} finding(s) suppressed in"

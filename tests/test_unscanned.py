@@ -10,7 +10,10 @@ import json
 import os
 import shutil
 import subprocess
+import threading
+from collections.abc import Callable
 from pathlib import Path
+from typing import TypeVar
 
 import pytest
 
@@ -30,6 +33,27 @@ def _root() -> bool:
 needs_permissions = pytest.mark.skipif(
     os.name == "nt" or _root(), reason="needs a file mode that denies reading"
 )
+needs_pipes = pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs named pipes")
+
+T = TypeVar("T")
+
+
+def _before_deadline(scan: Callable[[], T], pipe: Path) -> T:
+    """Run *scan* on a thread, and fail the test if it opens *pipe*.
+
+    Opening a named pipe to read it waits for a writer. On the test's own
+    thread a scan that did so would hang the suite instead of failing it.
+    """
+    result: list[T] = []
+    worker = threading.Thread(target=lambda: result.append(scan()), daemon=True)
+    worker.start()
+    worker.join(timeout=10)
+    if worker.is_alive():
+        # Opening the other end lets the reader go.
+        os.close(os.open(pipe, os.O_WRONLY | os.O_NONBLOCK))
+        worker.join(timeout=10)
+        pytest.fail(f"the scan opened {pipe.name} and waited for it")
+    return result[0]
 
 
 class TestMissingPath:
@@ -177,13 +201,55 @@ class TestSkippedFiles:
         finally:
             locked.chmod(0o755)
 
-    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs named pipes")
+    @needs_pipes
     def test_path_that_is_neither_file_nor_directory(self, tmp_path: Path) -> None:
         pipe = tmp_path / "pipe"
         os.mkfifo(pipe)
         scanner = Scanner()
         assert scanner.scan_path(pipe) == []
         assert scanner.skipped == [(str(pipe), "it is not a file or a directory")]
+
+    @needs_pipes
+    def test_named_pipe_in_a_directory_is_recorded_and_never_opened(self, tmp_path: Path) -> None:
+        """A walk that opened it would wait for a writer and never end."""
+        (tmp_path / "a.py").write_text(PLANTED, encoding="utf-8")
+        pipe = tmp_path / "pipe"
+        os.mkfifo(pipe)
+        scanner = Scanner()
+        findings = _before_deadline(lambda: scanner.scan_path(tmp_path), pipe)
+        assert [Path(f.file).name for f in findings] == ["a.py"]
+        assert scanner.skipped == [(str(pipe), "it is not a regular file")]
+
+    @needs_pipes
+    @pytest.mark.parametrize("name", ["pipe", "pipe.js"])
+    def test_named_pipe_inside_a_dependency(self, tmp_path: Path, name: str) -> None:
+        """Whether it starts with #! is not something a scan can find out."""
+        package = tmp_path / "node_modules" / "pkg"
+        package.mkdir(parents=True)
+        pipe = package / name
+        os.mkfifo(pipe)
+        scanner = Scanner(scan_deps=True)
+        assert _before_deadline(lambda: scanner.scan_path(tmp_path), pipe) == []
+        assert scanner.skipped == [(str(pipe), "it is not a regular file")]
+
+    @needs_pipes
+    def test_named_pipe_fails_ci(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        pipe = tmp_path / "pipe"
+        os.mkfifo(pipe)
+        assert _before_deadline(lambda: main(["--ci", str(tmp_path)]), pipe) == 2
+        assert f"Warning: {pipe} was not scanned: it is not a regular file" in (
+            capsys.readouterr().err
+        )
+
+    @needs_pipes
+    def test_named_pipe_that_is_allowlisted_or_behind_a_link(self, tmp_path: Path) -> None:
+        """Passed over without a word, as a regular file would be."""
+        pipe = tmp_path / "pipe"
+        os.mkfifo(pipe)
+        (tmp_path / "link").symlink_to(pipe)
+        scanner = Scanner(exclude_patterns=["pipe"])
+        assert _before_deadline(lambda: scanner.scan_path(tmp_path), pipe) == []
+        assert scanner.skipped == []
 
 
 def _git(repo: Path, *args: str) -> None:
