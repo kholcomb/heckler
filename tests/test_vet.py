@@ -174,7 +174,8 @@ class TestDownloadNpm:
             if "express/4.18.0" in url:
                 resp.read.return_value = json.dumps(registry_meta).encode()
             else:
-                resp.read.return_value = tarball_bytes
+                # Streamed in chunks: hand back the payload, then end-of-stream.
+                resp.read.side_effect = [tarball_bytes, b""]
             resp.__enter__ = lambda s: s
             resp.__exit__ = unittest.mock.MagicMock(return_value=False)
             return resp
@@ -227,7 +228,8 @@ class TestDownloadPyPI:
                 resp.read.return_value = json.dumps(registry_meta).encode()
             else:
                 downloaded_url = url
-                resp.read.return_value = wheel_bytes
+                # Streamed in chunks: hand back the payload, then end-of-stream.
+                resp.read.side_effect = [wheel_bytes, b""]
             resp.__enter__ = lambda s: s
             resp.__exit__ = unittest.mock.MagicMock(return_value=False)
             return resp
@@ -258,7 +260,8 @@ class TestDownloadPyPI:
             if "pypi.org" in url:
                 resp.read.return_value = json.dumps(registry_meta).encode()
             else:
-                resp.read.return_value = sdist_bytes
+                # Streamed in chunks: hand back the payload, then end-of-stream.
+                resp.read.side_effect = [sdist_bytes, b""]
             resp.__enter__ = lambda s: s
             resp.__exit__ = unittest.mock.MagicMock(return_value=False)
             return resp
