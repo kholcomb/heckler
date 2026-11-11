@@ -310,18 +310,6 @@ The lockfile hook scans installed packages, so install dependencies before commi
 | CI source scan | PR / push | <5s | Source scan, enforceable |
 | CI dep scan | Lockfile change + weekly | The install, then 30-60s | Installed dependencies |
 
-## Shell Script (Zero Dependencies)
-
-For environments without Python, a grep-based fallback is included:
-
-```bash
-bash scripts/heckler-scan.sh [directory]
-```
-
-Requires GNU grep with PCRE support (`grep -P`). macOS users: `brew install grep`.
-
-The script looks for the same characters the Python scanner reports by default, in the same files: its file list is generated from the scanner's (`python scripts/sync_shell_includes.py`), and tests keep both lists equal. It has no severities, allowlist or suppression comments, it matches file names case-sensitively (`script.R` is not picked up), and it cannot tell the variation selector in an emoji from a hidden one, so it flags both.
-
 ## Testing
 
 ```bash

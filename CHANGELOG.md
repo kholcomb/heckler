@@ -34,13 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A scan says what it left out: a note on stderr names the directories it skipped by name and, with `--all-text`, counts the files it took for binary. `--vet` names those files in its report
 - `[tool.heckler]` in `pyproject.toml` is read on Python 3.9 and 3.10 without `tomli` installed; a line that cannot be read there is named in a warning
 - `Scanner.skipped`, `Scanner.suppressed`, `Scanner.skipped_dirs` and `Scanner.binary` tell library users what was not scanned and what was suppressed
-- `scripts/sync_shell_includes.py` writes the file list of `scripts/heckler-scan.sh` from the scanner's lists
 
 ### Changed
 
 - A file with a source extension that contains NUL or other control bytes is reported instead of being treated as binary
 - A NUL byte is reported once per file, and scanning a file stops after 10,000 findings
-- `scripts/heckler-scan.sh` looks for the same characters as the Python scanner; it previously missed 27 of them
 - `--diff-only --ci` exits with code 2 when a changed package is not installed, or is installed at a different version than the lockfile names, instead of passing with a warning
 - The `heckler-lockfile` pre-commit hook only triggers on lockfiles heckler can parse
 - Variation selectors and zero width joiners inside well-formed emoji are reported at INFO instead of CRITICAL and MEDIUM; set `allow_emoji: false` to flag every occurrence as before
@@ -59,9 +57,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--vet` reports file paths with the archive they are in (`pkg-1.0.tar.gz/pkg-1.0/setup.py`), and exits with code 2 when part of a package could not be scanned
 - The flags of England, Scotland and Wales, the only emoji built from tag characters, are reported at INFO instead of HIGH
 - Files are reported in sorted order, the same on every filesystem
-- The file list of `scripts/heckler-scan.sh` is the scanner's default list; it used to cover 30 extensions and no extensionless files
 - The dependency scan workflow is now an example to copy, `examples/dependency-scan.yml`, and no longer runs in this repository, which has no dependencies to scan. It installs heckler from PyPI, scans only the directories it installed into, starts only for the lockfiles it can install from (uv is new; Go, Ruby and Composer lockfiles no longer start it), and keeps no cache, so the weekly run scans again
 - A release is a tag of the form `vMAJOR.MINOR.PATCH` and nothing else. The release workflow stops before publishing when the tag does not match the package version or this file has no section for it, and a major tag such as `v1` moves only to the newest release of its major version
+
+### Removed
+
+- `scripts/heckler-scan.sh`, the grep fallback for machines without Python. It could not do what the scanner does (no severities, no second reading of a file whose encoding is in doubt, no emoji rules, no allowlist or suppression comments), and a clean result from it said less than it appeared to. There is one scanner to maintain now
 
 ### Fixed
 
@@ -70,8 +71,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--diff-only` detects version bumps of existing packages in `package-lock.json`, `yarn.lock` and `poetry.lock`, not only newly added packages
 - Dependency constraints in `poetry.lock` are no longer read as package names
 - Inline `# comments` in `.heckler.yml` are no longer read as part of the value when PyYAML is not installed
-- `scripts/heckler-scan.sh` no longer reports a clean result when it could not check: it skipped any file containing a NUL byte, and in a non-UTF-8 locale `grep` rejected the pattern and the error was discarded
-- `scripts/heckler-scan.sh` spells out control characters in its listing instead of printing them raw, and no longer dies with a broken pipe on long listings
 - `.env.example` was in the extension list, where it could never match; `.env` and `.env.*` are now matched by name
 - A requirement pinned with a wildcard (`name==1.*`) is no longer reported as installed at the wrong version
 - The example in the README is the tool's real output, and a test keeps it so

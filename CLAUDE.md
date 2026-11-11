@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-heckler detects dangerous invisible Unicode in source code and in installed dependencies. It is a zero-dependency Python 3.9+ package that ships as a CLI and library, a GitHub Action, pre-commit hooks and a grep fallback script.
+heckler detects dangerous invisible Unicode in source code and in installed dependencies. It is a zero-dependency Python 3.9+ package that ships as a CLI and library, a GitHub Action and pre-commit hooks.
 
 This file holds what every task needs. The detail is in `AGENTS.md` and the project's own documents; read the part a task touches, when it touches it.
 
@@ -30,7 +30,7 @@ One test: `pytest tests/test_scanner.py::TestScanPath::test_skip_dirs`
 | Working on | Read |
 |---|---|
 | Code in `src/heckler/` | `AGENTS.md`: Architecture, and Rules the code is built around |
-| File lists, CLI options, the README, the shell script, the pre-commit hooks | `AGENTS.md`: Things that have to stay in step |
+| File lists, CLI options, the README, the pre-commit hooks, the example workflow | `AGENTS.md`: Things that have to stay in step |
 | Tests or fixtures | `AGENTS.md`: Tests and fixtures |
 | A commit, a version number or a release | `AGENTS.md`: Commits and releases, then `CONTRIBUTING.md`: Versioning and Releases |
 | What an option, exit code or configuration key does for users | `README.md` |

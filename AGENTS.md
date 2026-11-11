@@ -4,7 +4,7 @@ Guidance for coding agents working in this repository. Each section stands on it
 
 ## What this is
 
-heckler detects dangerous invisible Unicode (Glassworm variation selectors, Trojan Source bidi controls, zero-width and tag characters, control characters) in source code and in installed dependencies. The same code ships four ways from this repository: the `heckler` CLI and library on PyPI, a composite GitHub Action (`action.yml`), pre-commit hooks (`.pre-commit-hooks.yaml`), and a grep-only fallback (`scripts/heckler-scan.sh`).
+heckler detects dangerous invisible Unicode (Glassworm variation selectors, Trojan Source bidi controls, zero-width and tag characters, control characters) in source code and in installed dependencies. The same code ships three ways from this repository: the `heckler` CLI and library on PyPI, a composite GitHub Action (`action.yml`), and pre-commit hooks (`.pre-commit-hooks.yaml`).
 
 It is a zero-dependency package: standard library only, Python 3.9+. PyYAML and `tomli` are used when present and never required, which is why `config.py` carries its own small YAML and TOML readers.
 
@@ -26,7 +26,6 @@ ruff check src/ tests/
 ruff format --check src/ tests/         # drop --check to rewrite
 mypy src/                               # strict
 python -m heckler --ci --severity low . # self-scan: the tree must hold none of the characters
-python scripts/sync_shell_includes.py   # after changing the scanner's file lists (--check to verify)
 ```
 
 CI (`.github/workflows/ci.yml`) runs lint, format, tests and the self-scan on Python 3.9 to 3.13, and mypy once. Run the self-scan as `python -m heckler` from the development environment, so that it is the working tree that runs.
@@ -61,7 +60,6 @@ Most review comments and most past fixes come back to these.
 Tests fail when these drift, so change both sides together.
 
 - `README.md` and the code (`tests/test_readme.py`): the extension table lists exactly `DEFAULT_TEXT_EXTENSIONS`, the "N+ file extensions" figure and the code point count are checked, every CLI option appears in the CLI Reference, and the example output is what the tool really prints.
-- `scripts/heckler-scan.sh` and the scanner's file lists (`tests/test_coverage.py`): the list in the script is generated, so run `scripts/sync_shell_includes.py` and do not edit it by hand.
 - The `files:` pattern of the `heckler-lockfile` hook in `.pre-commit-hooks.yaml` and `detect_ecosystem()` in `lockfile.py` (`tests/test_lockfile.py`).
 - `examples/dependency-scan.yml` (`tests/test_examples.py`): its two trigger lists and the lockfiles its install step handles are the same set, and the promises in its header (no package scripts, wheels only, no cache, a read-only token) are checked.
 - `CHANGELOG.md` follows Keep a Changelog. User-visible changes go under `[Unreleased]` as one-line entries that describe behaviour.
