@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-11
+
 ### Added
 
 - Detection of every default-ignorable code point, including the unassigned ones in U+E0000-E0FFF and U+FFF0-FFF8, which render as nothing
@@ -127,4 +129,5 @@ Initial stable release and GitHub Actions Marketplace launch.
 - Harden archive extraction against path traversal
 - Replace npm/pip subprocess calls with direct registry API fetches
 
+[1.1.0]: https://github.com/kholcomb/heckler/releases/tag/v1.1.0
 [1.0.0]: https://github.com/kholcomb/heckler/releases/tag/v1.0.0
