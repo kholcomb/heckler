@@ -7,8 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--diff-only` parses pnpm lockfile v9 and `Pipfile.lock`
+- `--diff-only` finds Python packages in the project's virtualenv, or through `PATH`, when heckler runs in its own environment under pre-commit, and resolves them by distribution name rather than import name
+- `--diff-only` uses the commit range pre-commit is checking when nothing is staged
+- `--allow-unscanned`
+- The text report shows each offending line with its invisible characters spelled out
+
 ### Changed
 
+- `--diff-only --ci` exits with code 2 when a changed package is not installed, or is installed at a different version than the lockfile names, instead of passing with a warning
+- The `heckler-lockfile` pre-commit hook only triggers on lockfiles heckler can parse
 - Variation selectors and zero width joiners inside well-formed emoji are reported at INFO instead of CRITICAL and MEDIUM; set `allow_emoji: false` to flag every occurrence as before
 - `--all-text` leaves out files that have an unrecognised name and NUL bytes in their first 8 KB
 

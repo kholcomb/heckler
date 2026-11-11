@@ -63,6 +63,8 @@ suspect-project/config.py
 Total: 6 finding(s) across 3 file(s).
 ```
 
+In the text report, the findings on a source line are followed by that line with every invisible character spelled out, for example `const name = "ad<U+200B>min";`. Long lines are cut to a window around the finding.
+
 ## What It Detects
 
 | Category | Codepoints | Severity | Example |
@@ -90,6 +92,7 @@ heckler --vet PACKAGE [--registry npm|pypi]
 | `--severity LEVEL` | Minimum severity to report (default: low) |
 | `--scan-deps` | Include dependency directories |
 | `--diff-only` | With `--scan-deps`, only scan packages changed in staged lockfile diffs |
+| `--allow-unscanned` | With `--diff-only --ci`, do not fail when a changed package is not installed or is installed at a different version |
 | `--vet PACKAGE` | Download and scan a package before installing (fetches directly from public registries) |
 | `--registry npm\|pypi` | Package registry for `--vet` (auto-detected if omitted) |
 | `--config PATH` | Path to `.heckler.yml` config file (error if not found) |
@@ -97,7 +100,7 @@ heckler --vet PACKAGE [--registry npm|pypi]
 | `--quiet` | Only output findings, no summary |
 | `--all-text` | Scan all text files regardless of extension |
 
-Exit codes: `0` clean, `1` findings detected (with `--ci`), `2` error.
+Exit codes: `0` clean, `1` findings detected (with `--ci`), `2` error, including a changed package that `--diff-only --ci` could not scan.
 
 ## Library API
 
@@ -191,10 +194,12 @@ Use `--all-text` to scan every text file regardless of extension.
 | Capability | Supported Ecosystems |
 |---|---|
 | `--vet` (pre-install scan) | npm, PyPI |
-| `--diff-only` (lockfile parsing) | npm, yarn, pnpm, pip, poetry |
+| `--diff-only` (lockfile parsing) | npm, yarn (classic and berry), pnpm (lockfile v5 to v9), pip (`requirements.txt`), pipenv, poetry |
 | `--scan-deps` (installed deps) | node\_modules, vendor, site-packages, target (Cargo) |
 
 Lockfiles for Cargo, Go, Ruby, and Composer are detected but parsers are not yet implemented — a warning is emitted when using `--diff-only` with these.
+
+`--diff-only` scans the installed copy of each package that was added or bumped in the lockfile, so the dependencies have to be installed first. Node packages are looked up in `node_modules`, including pnpm's virtual store. Python packages are looked up in a virtualenv next to the lockfile or in the working directory (`.venv`, `venv`, `env`), then in the environment heckler runs in, then in the other interpreters on `PATH`, which is where an activated virtualenv is found when heckler runs under pre-commit. When the lockfile names a version, the installed copy has to be that version. With `--ci`, a changed package that is missing or installed at another version fails the run with exit code 2 and is named in the output; `--allow-unscanned` turns that back into a warning.
 
 > **Private registries:** `--vet` fetches packages directly from the public npm and PyPI registries (`registry.npmjs.org`, `pypi.org`) using only Python's stdlib — it does **not** shell out to `npm` or `pip` and does **not** execute any package code during download. This means private or corporate registries are not supported by `--vet`. If you need to scan packages from a private registry, download them manually and use `heckler <path>` to scan the extracted source.
 
@@ -231,6 +236,8 @@ repos:
       - id: heckler          # Scan source files
       - id: heckler-lockfile         # Scan changed dependencies on lockfile change
 ```
+
+The lockfile hook scans installed packages, so install dependencies before committing a lockfile change. If a changed package is not installed, the hook fails and names it; add `args: [--allow-unscanned]` to the hook to accept that instead.
 
 ### Dependency Scanning Workflow
 

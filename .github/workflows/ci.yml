@@ -26,6 +26,9 @@ jobs:
       - name: Lint
         run: ruff check src/ tests/
 
+      - name: Format
+        run: ruff format --check src/ tests/
+
       - name: Test
         run: pytest --cov=heckler --cov-report=term-missing
 

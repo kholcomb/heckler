@@ -61,6 +61,12 @@ they all pass locally before opening a pull request.
 ruff check src/ tests/
 ```
 
+**Formatting (Ruff):**
+
+```bash
+ruff format --check src/ tests/
+```
+
 **Tests:**
 
 ```bash
