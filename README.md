@@ -253,7 +253,7 @@ Available on the [GitHub Marketplace](https://github.com/marketplace/actions/hec
     upload-sarif: true  # Findings appear in GitHub Security tab
 ```
 
-`@v1` follows the newest 1.x.y release; use a full version such as `@v1.0.0` to pin one. Versions follow [Semantic Versioning](https://semver.org/).
+`@v1` follows the newest 1.x.y release; use a full version such as `@v1.1.0` to pin one. Versions follow [Semantic Versioning](https://semver.org/).
 
 Or invoke directly:
 
@@ -269,7 +269,7 @@ Add to `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/kholcomb/heckler
-    rev: v1.0.0
+    rev: v1.1.0
     hooks:
       - id: heckler          # Scan source files
       - id: heckler-lockfile         # Scan changed dependencies on lockfile change
