@@ -406,3 +406,29 @@ class TestInsideDependencies:
         findings = Scanner(scan_deps=True, all_text=True).scan_path(tmp_path)
         assert [f.char_name for f in findings] == ["Right-to-Left Override" + LOOKS_BINARY]
         assert [(f.source, f.package) for f in findings] == [("dependency", "pkg")]
+
+
+class TestNamesInNotesAreSpelledOut:
+    """A note prints the name of a file, and whoever made the file chose it.
+
+    An escape sequence or a line break in the name of a file left out as
+    binary would reach the terminal as it is, where it can wipe the note
+    that names the file or add a line that heckler never wrote.
+    """
+
+    def test_control_characters_in_the_name_of_a_file_left_out(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        escape, carriage_return = chr(0x1B), chr(0x0D)
+        name = f"blob{escape}[2K{carriage_return}ok"
+        try:
+            (tmp_path / name).write_bytes(bytes(range(256)) * 4)
+        except OSError:
+            pytest.skip("this filesystem does not take such a name")
+        (tmp_path / "a.py").write_text("x = 1\n")
+        main(["--no-color", str(tmp_path)])
+        err = capsys.readouterr().err
+        assert "binary by content" in err
+        assert escape not in err
+        assert carriage_return not in err
+        assert "blob<U+001B>[2K<U+000D>ok" in err

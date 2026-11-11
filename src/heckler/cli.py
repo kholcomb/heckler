@@ -10,6 +10,7 @@ from ._version import __version__
 from .characters import Severity
 from .config import Config, ConfigError, load_config
 from .formatters import get_formatter
+from .formatters.text import spell_out
 from .scanner import Finding, Scanner
 
 # How many skipped directories or files a note names before it counts the rest.
@@ -188,7 +189,9 @@ def _build_scanner(args: argparse.Namespace, config: Config, *, scan_deps: bool)
 
 def _report_skipped(scanner: Scanner) -> list[str]:
     """Warn about each file the scanner could not read, and return the warnings."""
-    messages = [f"{path} was not scanned: {reason}" for path, reason in scanner.skipped]
+    # A name is written by whoever made the file. Spelled out, it cannot send
+    # an escape sequence or a line break to the terminal.
+    messages = [f"{spell_out(path)} was not scanned: {reason}" for path, reason in scanner.skipped]
     for message in messages:
         print(f"Warning: {message}", file=sys.stderr)
     return messages
@@ -232,8 +235,13 @@ def _finish(
 
 
 def _name_some(paths: list[str]) -> str:
-    """The first few of *paths*, and how many more there are."""
-    named = ", ".join(paths[:_MAX_PATHS_NAMED])
+    """The first few of *paths*, and how many more there are.
+
+    Each name is spelled out: a file left out as binary is named by whoever
+    made it, and an escape sequence or a line break in the name would hide
+    the note or add a line to it.
+    """
+    named = ", ".join(spell_out(path) for path in paths[:_MAX_PATHS_NAMED])
     more = len(paths) - _MAX_PATHS_NAMED
     return f"{named} and {more} more" if more > 0 else named
 
