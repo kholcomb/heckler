@@ -1,0 +1,20 @@
+# Commit hooks for working on heckler itself.
+# Run `pre-commit install` once after cloning; it sets up both hook types.
+default_install_hook_types: [pre-commit, commit-msg]
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.4
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+        # Python only: the hook would otherwise also rewrite the code samples
+        # in the Markdown docs.
+        types_or: [python, pyi]
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.5.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import copy
+import difflib
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -44,7 +47,7 @@ class TestDetectEcosystem:
 
 class TestParseChangedPackages:
     def test_npm_lockfile_diff(self) -> None:
-        diff = '''\
+        diff = """\
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -1,5 +1,10 @@
@@ -54,28 +57,28 @@ class TestParseChangedPackages:
 +    "node_modules/@scope/pkg": {
 +      "version": "1.0.0"
      }
-'''
+"""
         packages = parse_changed_packages(diff, "npm")
         names = [p[0] for p in packages]
         assert "lodash" in names
         assert "@scope/pkg" in names
 
     def test_pip_diff(self) -> None:
-        diff = '''\
+        diff = """\
 --- a/requirements.txt
 +++ b/requirements.txt
 @@ -1,3 +1,5 @@
  flask==3.0.0
 +requests==2.31.0
 +django>=4.2
-'''
+"""
         packages = parse_changed_packages(diff, "pip")
         names = [p[0] for p in packages]
         assert "requests" in names
         assert "django" in names
 
     def test_yarn_diff(self) -> None:
-        diff = '''\
+        diff = """\
 --- a/yarn.lock
 +++ b/yarn.lock
 @@ -1,5 +1,10 @@
@@ -83,14 +86,14 @@ class TestParseChangedPackages:
 +  version "4.17.21"
 +"@babel/core@^7.24.0":
 +  version "7.24.0"
-'''
+"""
         packages = parse_changed_packages(diff, "yarn")
         names = [p[0] for p in packages]
         assert "lodash" in names
         assert "@babel/core" in names
 
     def test_pnpm_diff(self) -> None:
-        diff = '''\
+        diff = """\
 --- a/pnpm-lock.yaml
 +++ b/pnpm-lock.yaml
 @@ -1,5 +1,10 @@
@@ -98,7 +101,7 @@ class TestParseChangedPackages:
 +    resolution: {integrity: sha512-xxx}
 +  /@scope/pkg@1.0.0:
 +    resolution: {integrity: sha512-yyy}
-'''
+"""
         packages = parse_changed_packages(diff, "pnpm")
         names = [p[0] for p in packages]
         assert "lodash" in names
@@ -119,7 +122,11 @@ REPO_ROOT = Path(__file__).parent.parent
 
 def _git(*args: str, cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["git", *args], capture_output=True, text=True, timeout=10, cwd=cwd,
+        ["git", *args],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        cwd=cwd,
     )
 
 
@@ -145,15 +152,18 @@ class TestGetLockfileDiffIntegration:
     def test_staged_diff_returns_content(self) -> None:
         try:
             # Create a new lockfile with a known package
-            lockfile_content = json.dumps({
-                "name": "test",
-                "lockfileVersion": 3,
-                "packages": {
-                    "node_modules/heckler-test-pkg": {
-                        "version": "1.0.0",
-                    }
-                }
-            }, indent=2)
+            lockfile_content = json.dumps(
+                {
+                    "name": "test",
+                    "lockfileVersion": 3,
+                    "packages": {
+                        "node_modules/heckler-test-pkg": {
+                            "version": "1.0.0",
+                        }
+                    },
+                },
+                indent=2,
+            )
             self.TEMP_LOCKFILE.write_text(lockfile_content, encoding="utf-8")
             _git("add", "--", str(self.TEMP_LOCKFILE))
 
@@ -167,14 +177,17 @@ class TestGetLockfileDiffIntegration:
 
     def test_parse_staged_diff_extracts_packages(self) -> None:
         try:
-            lockfile_content = json.dumps({
-                "name": "test",
-                "lockfileVersion": 3,
-                "packages": {
-                    "node_modules/lodash": {"version": "4.17.21"},
-                    "node_modules/@scope/evil-pkg": {"version": "0.0.1"},
-                }
-            }, indent=2)
+            lockfile_content = json.dumps(
+                {
+                    "name": "test",
+                    "lockfileVersion": 3,
+                    "packages": {
+                        "node_modules/lodash": {"version": "4.17.21"},
+                        "node_modules/@scope/evil-pkg": {"version": "0.0.1"},
+                    },
+                },
+                indent=2,
+            )
             self.TEMP_LOCKFILE.write_text(lockfile_content, encoding="utf-8")
             _git("add", "--", str(self.TEMP_LOCKFILE))
 
@@ -272,18 +285,21 @@ class TestScanChangedDepsIntegration:
             evil_dir = self.TEMP_NM / "evil-pkg"
             evil_dir.mkdir(parents=True)
             (evil_dir / "index.js").write_text(
-                'const payload = `\uFE00\uFE01\uFE0F`;\n',
+                "const payload = `\ufe00\ufe01\ufe0f`;\n",
                 encoding="utf-8",
             )
 
             # 2. Create and stage a lockfile referencing it
-            lockfile_content = json.dumps({
-                "name": "test",
-                "lockfileVersion": 3,
-                "packages": {
-                    "node_modules/evil-pkg": {"version": "1.0.0"},
-                }
-            }, indent=2)
+            lockfile_content = json.dumps(
+                {
+                    "name": "test",
+                    "lockfileVersion": 3,
+                    "packages": {
+                        "node_modules/evil-pkg": {"version": "1.0.0"},
+                    },
+                },
+                indent=2,
+            )
             self.TEMP_LOCKFILE.write_text(lockfile_content, encoding="utf-8")
             _git("add", "--", str(self.TEMP_LOCKFILE))
 
@@ -299,3 +315,852 @@ class TestScanChangedDepsIntegration:
 
         finally:
             self._cleanup()
+
+
+# ---------------------------------------------------------------------------
+# Version bumps: the package name is an unchanged line, only the lines below
+# it change. Diffs are built from before/after lockfiles with full context,
+# which is what get_lockfile_diff() asks git for.
+# ---------------------------------------------------------------------------
+
+
+def _full_diff(old: str, new: str) -> str:
+    return "\n".join(
+        difflib.unified_diff(
+            old.splitlines(),
+            new.splitlines(),
+            "a/lock",
+            "b/lock",
+            n=1_000_000,
+            lineterm="",
+        )
+    )
+
+
+_NPM_LOCK: dict[str, object] = {
+    "name": "demo",
+    "lockfileVersion": 2,
+    "packages": {
+        "": {"name": "demo", "dependencies": {"express": "^4.18.0"}},
+        "node_modules/@scope/pkg": {"version": "1.0.0", "integrity": "sha512-SSSS"},
+        "node_modules/accepts": {"version": "1.3.8", "integrity": "sha512-AAAA"},
+        "node_modules/express": {
+            "version": "4.18.0",
+            "resolved": "https://registry.npmjs.org/express/-/express-4.18.0.tgz",
+            "integrity": "sha512-EEEE",
+            "dependencies": {"accepts": "~1.3.8"},
+        },
+        "node_modules/express/node_modules/debug": {"version": "2.6.9"},
+    },
+    "dependencies": {
+        "express": {"version": "4.18.0", "requires": {"accepts": "~1.3.8"}},
+    },
+}
+
+
+def _npm_diff(mutate: object) -> str:
+    new = copy.deepcopy(_NPM_LOCK)
+    mutate(new)  # type: ignore[operator]
+    return _full_diff(json.dumps(_NPM_LOCK, indent=2), json.dumps(new, indent=2))
+
+
+class TestNpmVersionBumps:
+    def test_bump_of_existing_package(self) -> None:
+        def bump(lock: dict) -> None:  # type: ignore[type-arg]
+            entry = lock["packages"]["node_modules/express"]
+            entry["version"] = "4.18.2"
+            entry["resolved"] = "https://registry.npmjs.org/express/-/express-4.18.2.tgz"
+            entry["integrity"] = "sha512-FFFF"
+
+        assert parse_changed_packages(_npm_diff(bump), "npm") == [("express", "4.18.2")]
+
+    def test_change_deep_inside_a_block(self) -> None:
+        def bump(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["packages"]["node_modules/express"]["dependencies"]["accepts"] = "~1.3.9"
+
+        assert parse_changed_packages(_npm_diff(bump), "npm") == [("express", "4.18.0")]
+
+    def test_bump_of_nested_package(self) -> None:
+        def bump(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["packages"]["node_modules/express/node_modules/debug"]["version"] = "2.6.10"
+
+        assert parse_changed_packages(_npm_diff(bump), "npm") == [
+            ("express/node_modules/debug", "2.6.10"),
+        ]
+
+    def test_new_package_reports_only_itself(self) -> None:
+        def add(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["packages"]["node_modules/zebra"] = {"version": "1.0.0"}
+
+        assert parse_changed_packages(_npm_diff(add), "npm") == [("zebra", "1.0.0")]
+
+    def test_root_entry_change_is_not_a_package(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["packages"][""]["dependencies"]["express"] = "^4.18.2"
+
+        assert parse_changed_packages(_npm_diff(edit), "npm") == []
+
+    def test_removed_package_does_not_implicate_its_neighbour(self) -> None:
+        def remove(lock: dict) -> None:  # type: ignore[type-arg]
+            del lock["packages"]["node_modules/accepts"]
+
+        assert parse_changed_packages(_npm_diff(remove), "npm") == []
+
+    def test_legacy_dependencies_section_is_not_the_last_package(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["dependencies"]["express"]["version"] = "4.18.2"
+
+        assert parse_changed_packages(_npm_diff(edit), "npm") == []
+
+
+_YARN_CLASSIC = """\
+# yarn lockfile v1
+
+
+"@babel/core@^7.24.0":
+  version "7.24.0"
+  resolved "https://registry.yarnpkg.com/@babel/core/-/core-7.24.0.tgz#abc"
+  integrity sha512-AAAA
+  dependencies:
+    "@babel/helper" "^7.24.0"
+
+lodash@^4.17.0, lodash@^4.17.20:
+  version "4.17.20"
+  resolved "https://registry.yarnpkg.com/lodash/-/lodash-4.17.20.tgz#def"
+  integrity sha512-BBBB
+"""
+
+_YARN_BERRY = """\
+__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"demo@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "demo@workspace:."
+  dependencies:
+    lodash: "npm:^4.17.20"
+  languageName: unknown
+  linkType: soft
+
+"lodash@npm:^4.17.20, lodash@npm:^4.17.21":
+  version: 4.17.20
+  resolution: "lodash@npm:4.17.20"
+  checksum: 10c0/aaaa
+  languageName: node
+  linkType: hard
+"""
+
+
+class TestYarnVersionBumps:
+    def test_classic_bump(self) -> None:
+        new = _YARN_CLASSIC.replace("4.17.20", "4.17.21").replace("BBBB", "CCCC")
+        # The range in the header also reads 4.17.20; keep the header unchanged.
+        new = new.replace("lodash@^4.17.21:", "lodash@^4.17.20:")
+        assert parse_changed_packages(_full_diff(_YARN_CLASSIC, new), "yarn") == [
+            ("lodash", "4.17.21"),
+        ]
+
+    def test_classic_scoped_bump(self) -> None:
+        new = _YARN_CLASSIC.replace('version "7.24.0"', 'version "7.24.1"')
+        assert parse_changed_packages(_full_diff(_YARN_CLASSIC, new), "yarn") == [
+            ("@babel/core", "7.24.1"),
+        ]
+
+    def test_berry_bump(self) -> None:
+        new = _YARN_BERRY.replace("version: 4.17.20", "version: 4.17.21")
+        new = new.replace("lodash@npm:4.17.20", "lodash@npm:4.17.21")
+        assert parse_changed_packages(_full_diff(_YARN_BERRY, new), "yarn") == [
+            ("lodash", "4.17.21"),
+        ]
+
+    def test_berry_workspace_and_metadata_are_not_packages(self) -> None:
+        new = _YARN_BERRY.replace('lodash: "npm:^4.17.20"', 'lodash: "npm:^4.17.21"')
+        new = new.replace("cacheKey: 10c0", "cacheKey: 10c1")
+        assert parse_changed_packages(_full_diff(_YARN_BERRY, new), "yarn") == []
+
+    def test_alias_resolves_to_installed_name(self) -> None:
+        new = _YARN_CLASSIC + '\n"foo@npm:bar@^1.0.0":\n  version "1.0.0"\n'
+        assert parse_changed_packages(_full_diff(_YARN_CLASSIC, new), "yarn") == [
+            ("foo", "1.0.0"),
+        ]
+
+
+_POETRY_LOCK = """\
+[[package]]
+name = "certifi"
+version = "2024.2.2"
+description = "Mozilla's CA bundle"
+optional = false
+python-versions = ">=3.6"
+files = [
+    {file = "certifi-2024.2.2-py3-none-any.whl", hash = "sha256:aaaa"},
+]
+
+[[package]]
+name = "Requests"
+version = "2.31.0"
+description = "HTTP for Humans"
+optional = false
+python-versions = ">=3.7"
+files = [
+    {file = "requests-2.31.0-py3-none-any.whl", hash = "sha256:bbbb"},
+]
+
+[package.dependencies]
+certifi = ">=2017.4.17"
+
+[package.extras]
+socks = ["PySocks (>=1.5.6,!=1.5.7)"]
+
+[metadata]
+lock-version = "2.0"
+python-versions = "^3.9"
+content-hash = "cccc"
+"""
+
+
+class TestPoetryVersionBumps:
+    def test_bump(self) -> None:
+        new = _POETRY_LOCK.replace("2.31.0", "2.32.0").replace("bbbb", "dddd")
+        assert parse_changed_packages(_full_diff(_POETRY_LOCK, new), "poetry") == [
+            ("requests", "2.32.0"),
+        ]
+
+    def test_sub_table_change_belongs_to_its_package(self) -> None:
+        new = _POETRY_LOCK.replace('certifi = ">=2017.4.17"', 'certifi = ">=2023.5.7"')
+        assert parse_changed_packages(_full_diff(_POETRY_LOCK, new), "poetry") == [
+            ("requests", "2.31.0"),
+        ]
+
+    def test_metadata_change_is_not_a_package(self) -> None:
+        new = _POETRY_LOCK.replace('content-hash = "cccc"', 'content-hash = "eeee"')
+        assert parse_changed_packages(_full_diff(_POETRY_LOCK, new), "poetry") == []
+
+    def test_new_package(self) -> None:
+        new = _POETRY_LOCK.replace(
+            "[metadata]",
+            '[[package]]\nname = "idna"\nversion = "3.7"\n\n[metadata]',
+        )
+        assert parse_changed_packages(_full_diff(_POETRY_LOCK, new), "poetry") == [
+            ("idna", "3.7"),
+        ]
+
+
+class TestNpmEntryKinds:
+    def test_workspace_link_is_not_a_dependency(self) -> None:
+        def add(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["packages"]["node_modules/app"] = {"resolved": "packages/app", "link": True}
+
+        assert parse_changed_packages(_npm_diff(add), "npm") == []
+
+    def test_dependency_named_version_is_not_the_version(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            entry = lock["packages"]["node_modules/express"]
+            entry["dependencies"]["version"] = "^9.9.9"
+
+        assert parse_changed_packages(_npm_diff(edit), "npm") == [("express", "4.18.0")]
+
+
+class TestRequirementsParsing:
+    def _added(self, *lines: str) -> list[tuple[str, str]]:
+        diff = "--- a/requirements.txt\n+++ b/requirements.txt\n@@ -1 +1,9 @@\n"
+        diff += "".join(f"+{line}\n" for line in lines)
+        return parse_changed_packages(diff, "pip")
+
+    def test_exact_pin(self) -> None:
+        assert self._added("requests==2.32.0") == [("requests", "2.32.0")]
+
+    def test_pin_with_hashes_markers_and_comments(self) -> None:
+        assert self._added(
+            "requests==2.32.0 \\",
+            "    --hash=sha256:aaaa",
+            'idna==3.7 ; python_version >= "3.8"',
+            "Certifi==2024.2.2  # ca bundle",
+            "urllib3[socks]==2.2.1",
+        ) == [
+            ("requests", "2.32.0"),
+            ("idna", "3.7"),
+            ("certifi", "2024.2.2"),
+            ("urllib3", "2.2.1"),
+        ]
+
+    def test_range_has_no_version_to_verify(self) -> None:
+        assert self._added("django>=4.2", "flask~=3.0") == [("django", ""), ("flask", "")]
+
+    def test_options_and_comments_are_not_packages(self) -> None:
+        assert self._added("# pinned==1.0", "-r base.txt", "--index-url https://x/simple") == []
+
+
+_PNPM_V9 = """\
+lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      lodash:
+        specifier: ^4.17.20
+        version: 4.17.20
+
+packages:
+
+  '@scope/pkg@1.0.0':
+    resolution: {integrity: sha512-SSSS}
+
+  lodash@4.17.20:
+    resolution: {integrity: sha512-AAAA}
+
+snapshots:
+
+  '@scope/pkg@1.0.0(react@18.2.0)':
+    dependencies:
+      react: 18.2.0
+
+  lodash@4.17.20: {}
+"""
+
+_PNPM_V6 = """\
+lockfileVersion: '6.0'
+
+dependencies:
+  lodash:
+    specifier: ^4.17.20
+    version: 4.17.20
+
+packages:
+
+  /@scope/pkg@1.0.0(react@18.2.0):
+    resolution: {integrity: sha512-SSSS}
+    dev: false
+
+  /lodash@4.17.20:
+    resolution: {integrity: sha512-AAAA}
+    dev: false
+"""
+
+_PNPM_V5 = """\
+lockfileVersion: 5.4
+
+specifiers:
+  lodash: ^4.17.20
+
+packages:
+
+  /@scope/pkg/1.0.0_react@18.2.0:
+    resolution: {integrity: sha512-SSSS}
+    dev: false
+
+  /lodash/4.17.20:
+    resolution: {integrity: sha512-AAAA}
+    dev: false
+"""
+
+
+class TestPnpmFormats:
+    @pytest.mark.parametrize("lock", [_PNPM_V9, _PNPM_V6, _PNPM_V5], ids=["v9", "v6", "v5"])
+    def test_bump(self, lock: str) -> None:
+        new = lock.replace("4.17.20", "4.17.21").replace("AAAA", "BBBB")
+        assert parse_changed_packages(_full_diff(lock, new), "pnpm") == [("lodash", "4.17.21")]
+
+    @pytest.mark.parametrize("lock", [_PNPM_V9, _PNPM_V6, _PNPM_V5], ids=["v9", "v6", "v5"])
+    def test_scoped_package_with_peer_suffix(self, lock: str) -> None:
+        new = lock.replace("SSSS", "TTTT")
+        assert parse_changed_packages(_full_diff(lock, new), "pnpm") == [("@scope/pkg", "1.0.0")]
+
+    def test_importer_change_is_not_a_package(self) -> None:
+        new = _PNPM_V9.replace("specifier: ^4.17.20", "specifier: ^4.17.21")
+        assert parse_changed_packages(_full_diff(_PNPM_V9, new), "pnpm") == []
+
+    def test_git_reference_has_no_version_to_verify(self) -> None:
+        new = _PNPM_V9.replace(
+            "snapshots:",
+            "  tool@https://codeload.github.com/o/tool/tar.gz/abc123:\n"
+            "    resolution: {tarball: https://codeload.github.com/o/tool/tar.gz/abc123}\n"
+            "\nsnapshots:",
+        )
+        assert parse_changed_packages(_full_diff(_PNPM_V9, new), "pnpm") == [("tool", "")]
+
+
+_PIPFILE_LOCK: dict[str, object] = {
+    "_meta": {"hash": {"sha256": "mmmm"}, "pipfile-spec": 6},
+    "default": {
+        "certifi": {"hashes": ["sha256:aaaa"], "version": "==2024.2.2"},
+        "Requests": {"hashes": ["sha256:bbbb"], "index": "pypi", "version": "==2.31.0"},
+    },
+    "develop": {
+        "pytest": {"hashes": ["sha256:cccc"], "version": "==8.0.0"},
+    },
+}
+
+
+def _pipfile_diff(mutate: object) -> str:
+    new = copy.deepcopy(_PIPFILE_LOCK)
+    mutate(new)  # type: ignore[operator]
+    return _full_diff(json.dumps(_PIPFILE_LOCK, indent=4), json.dumps(new, indent=4))
+
+
+class TestPipfileLock:
+    def test_ecosystem(self) -> None:
+        assert detect_ecosystem("Pipfile.lock") == "pipenv"
+
+    def test_bump(self) -> None:
+        def bump(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["default"]["Requests"] = {"hashes": ["sha256:dddd"], "version": "==2.32.0"}
+
+        assert parse_changed_packages(_pipfile_diff(bump), "pipenv") == [("requests", "2.32.0")]
+
+    def test_develop_section(self) -> None:
+        def bump(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["develop"]["pytest"]["version"] = "==8.1.0"
+
+        assert parse_changed_packages(_pipfile_diff(bump), "pipenv") == [("pytest", "8.1.0")]
+
+    def test_new_package(self) -> None:
+        def add(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["default"]["idna"] = {"hashes": ["sha256:eeee"], "version": "==3.7"}
+
+        assert parse_changed_packages(_pipfile_diff(add), "pipenv") == [("idna", "3.7")]
+
+    def test_meta_change_is_not_a_package(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["_meta"]["hash"]["sha256"] = "nnnn"
+
+        assert parse_changed_packages(_pipfile_diff(edit), "pipenv") == []
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
+class TestVersionBumpIntegration:
+    """A staged bump of an installed package is scanned, in a throwaway repo."""
+
+    def test_staged_bump_is_scanned(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def git(*args: str) -> None:
+            result = _git(
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+                cwd=tmp_path,
+            )
+            assert result.returncode == 0, result.stderr
+
+        lock = {
+            "name": "demo",
+            "lockfileVersion": 3,
+            "packages": {
+                "": {"name": "demo"},
+                "node_modules/accepts": {"version": "1.3.8"},
+                "node_modules/express": {
+                    "version": "4.18.0",
+                    "resolved": "https://registry.npmjs.org/express/-/express-4.18.0.tgz",
+                    "license": "MIT",
+                    "engines": {"node": ">= 0.10.0"},
+                    "integrity": "sha512-EEEE",
+                },
+            },
+        }
+        lockfile = tmp_path / "package-lock.json"
+        lockfile.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        git("init", "-q")
+        git("add", "package-lock.json")
+        git("commit", "-q", "-m", "base")
+
+        for name in ("accepts", "express"):
+            pkg = tmp_path / "node_modules" / name
+            pkg.mkdir(parents=True)
+            (pkg / "index.js").write_text(
+                "const payload = `\ufe00\ufe01\ufe02`;\n",
+                encoding="utf-8",
+            )
+
+        # Only a line well below the package name changes, so the name is
+        # outside git's default three lines of context.
+        lock["packages"]["node_modules/express"]["integrity"] = "sha512-FFFF"  # type: ignore[index]
+        lockfile.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        git("add", "package-lock.json")
+
+        monkeypatch.chdir(tmp_path)
+        findings = scan_changed_deps(["package-lock.json"], Scanner(scan_deps=True))
+
+        assert len(findings) == 3
+        assert {f.package for f in findings} == {"express"}
+
+
+class TestRequirementsFileNames:
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "requirements.txt",
+            "requirements-dev.txt",
+            "requirements_test.txt",
+            "requirements.prod.txt",
+            "Requirements-Docs.txt",
+            "sub/dir/requirements-ci.txt",
+        ],
+    )
+    def test_requirements_variants_are_pip(self, name: str) -> None:
+        assert detect_ecosystem(name) == "pip"
+
+    @pytest.mark.parametrize(
+        "name", ["requirements.in", "requirements.txt.bak", "dev-requirements.txt", "notes.txt"]
+    )
+    def test_other_names_are_not(self, name: str) -> None:
+        assert detect_ecosystem(name) == "unknown"
+
+    def test_pre_commit_hook_triggers_on_what_heckler_can_parse(self) -> None:
+        """The hook's files: pattern and detect_ecosystem() have to agree."""
+        hooks = (REPO_ROOT / ".pre-commit-hooks.yaml").read_text(encoding="utf-8")
+        match = re.search(r"^  files: (.+)$", hooks, re.MULTILINE)
+        assert match, "files: pattern of the heckler-lockfile hook not found"
+        pattern = re.compile(match.group(1))
+
+        parsed = [
+            "package-lock.json",
+            "yarn.lock",
+            "pnpm-lock.yaml",
+            "poetry.lock",
+            "Pipfile.lock",
+            "requirements.txt",
+            "requirements-dev.txt",
+            "requirements_test.txt",
+            "services/api/requirements.prod.txt",
+            "web/package-lock.json",
+        ]
+        not_parsed = [
+            "Cargo.lock",
+            "go.sum",
+            "Gemfile.lock",
+            "composer.lock",
+            "requirements.in",
+            "dev-requirements.txt",
+            "requirements/base.txt",
+            "my-package-lock.json",
+        ]
+        for name in parsed:
+            assert pattern.search(name), name
+            assert detect_ecosystem(name) not in ("unknown", "cargo", "go", "ruby", "composer")
+        for name in not_parsed:
+            assert not pattern.search(name), name
+
+
+class TestRequirementsWithoutAPin:
+    """Lines the old parser passed over: no operator, '>' and '<', and 'name @ url'."""
+
+    def _added(self, *lines: str) -> tuple[list[tuple[str, str]], list[str]]:
+        diff = "--- a/requirements.txt\n+++ b/requirements.txt\n@@ -1 +1,9 @@\n"
+        diff += "".join(f"+{line}\n" for line in lines)
+        problems: list[str] = []
+        return parse_changed_packages(diff, "pip", problems), problems
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "requests",
+            "Requests",
+            "requests>2.0",
+            "requests<3",
+            "requests > 2.0",
+            "requests>=2.0,<3",
+            "requests!=2.31.0",
+            "requests~=2.31",
+            "requests==2.*",
+            "requests[socks]",
+            "requests (>=2.0)",
+            "requests @ https://example.test/requests-2.32.0.tar.gz",
+            "requests@https://example.test/requests-2.32.0.tar.gz",
+            "requests[socks] @ file:///srv/wheels/requests.whl",
+            'requests ; python_version < "3.13"',
+            "requests  # http client",
+            "requests \\",
+            "requests --hash=sha256:aaaa",
+        ],
+    )
+    def test_package_with_no_version_to_verify(self, line: str) -> None:
+        assert self._added(line) == ([("requests", "")], [])
+
+    @pytest.mark.parametrize(
+        ("line", "version"),
+        [
+            ("requests==2.32.0", "2.32.0"),
+            ("requests == 2.32.0", "2.32.0"),
+            ("requests===2.32.0", "2.32.0"),
+            ("requests (==2.32.0)", "2.32.0"),
+            ("requests==2.32.0 --hash=sha256:aaaa", "2.32.0"),
+            ('requests==2.32.0; python_version >= "3.8"', "2.32.0"),
+        ],
+    )
+    def test_exact_pin_keeps_its_version(self, line: str, version: str) -> None:
+        assert self._added(line) == ([("requests", version)], [])
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "pkg-1.0-py3-none-any.whl extra",
+            "requests==",
+            "requests=2.32.0",
+            "requests (>=2.0",
+            "requests 2.32.0",
+        ],
+    )
+    def test_line_that_starts_with_a_name_but_is_not_a_requirement(self, line: str) -> None:
+        packages, problems = self._added(line)
+        assert packages == []
+        assert problems == [f'the added line "{line}" could not be read as a requirement']
+
+    @pytest.mark.parametrize(
+        ("line", "package"),
+        [
+            ("-e git+https://example.test/org/pkg.git#egg=Pkg", ("pkg", "")),
+            ("--editable git+https://example.test/org/pkg.git@v1.0#egg=pkg", ("pkg", "")),
+            ("-e git+https://example.test/org/mono.git#egg=pkg&subdirectory=src/pkg", ("pkg", "")),
+            ("git+https://example.test/org/pkg.git#egg=pkg[extra]", ("pkg", "")),
+            ("./wheels/pkg-1.0-py3-none-any.whl", ("pkg", "1.0")),
+            ("wheels/My_Pkg-2.1.0-1-cp312-cp312-linux_x86_64.whl", ("my_pkg", "2.1.0")),
+            ("file:///srv/wheels/pkg-1.0-py3-none-any.whl", ("pkg", "1.0")),
+            ("https://example.test/pkg-1.0.tar.gz", ("pkg", "1.0")),
+            ("https://example.test/dl/some-pkg-0.9.zip#sha256=abcd", ("some-pkg", "0.9")),
+            ("./wheels/pkg-1.0-py3-none-any.whl --hash=sha256:aaaa", ("pkg", "1.0")),
+            ('./wheels/pkg-1.0-py3-none-any.whl ; python_version >= "3.9"', ("pkg", "1.0")),
+        ],
+    )
+    def test_url_or_path_that_names_its_package(self, line: str, package: tuple[str, str]) -> None:
+        assert self._added(line) == ([package], [])
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "git+https://example.test/org/pkg.git@v1.0",
+            "-e git+https://example.test/org/pkg.git",
+            "https://example.test/download",
+            "-e ../shared/pkg",
+            "./tools/../../outside",
+            "/srv/src/pkg",
+            "~/src/pkg",
+            "./wheels/not-a-wheel-name.whl",
+            "-e git+https://example.test/org/pkg.git#egg=pkg and more",
+        ],
+    )
+    def test_url_or_path_that_names_no_package_is_a_problem(self, line: str) -> None:
+        packages, problems = self._added(line)
+        assert packages == []
+        assert problems == [f'the added line "{line}" does not say which package it installs']
+
+    @pytest.mark.parametrize(
+        "line", ["-e .", "--editable=.", ".", "./vendor/local-package", "-e ./a"]
+    )
+    def test_directory_inside_the_project_is_left_to_the_source_scan(self, line: str) -> None:
+        assert self._added(line) == ([], [])
+
+    def test_lines_that_are_not_packages_are_not_problems(self) -> None:
+        assert self._added(
+            "",
+            "# requests==1.0",
+            "-r base.txt",
+            "-c constraints.txt",
+            "--index-url https://example.test/simple",
+            "    --hash=sha256:aaaa",
+            "./vendor/local-package",
+            '; python_version < "3.8"',
+        ) == ([], [])
+
+    def test_removed_and_unchanged_lines_are_not_read(self) -> None:
+        diff = (
+            "--- a/requirements.txt\n+++ b/requirements.txt\n@@ -1,3 +1,3 @@\n"
+            " https://example.test/kept.tar.gz\n-https://example.test/gone.tar.gz\n+flask\n"
+        )
+        problems: list[str] = []
+        assert parse_changed_packages(diff, "pip", problems) == [("flask", "")]
+        assert problems == []
+
+    def test_unreadable_line_is_spelled_out_and_cut(self) -> None:
+        line = "see " + chr(0x1B) + "[2K" + chr(0x202E) + " " + "x" * 200
+        _, problems = self._added(line)
+        assert chr(0x1B) not in problems[0]
+        assert chr(0x202E) not in problems[0]
+        assert "<U+001B>[2K<U+202E>" in problems[0]
+        assert problems[0].endswith('..." could not be read as a requirement')
+        assert len(problems[0]) < 220
+
+    def test_problems_are_optional(self) -> None:
+        diff = "+++ b/requirements.txt\n+https://example.test/pkg.tar.gz\n+flask\n"
+        assert parse_changed_packages(diff, "pip") == [("flask", "")]
+
+
+_NPM_V1_LOCK: dict[str, object] = {
+    "name": "demo",
+    "version": "1.0.0",
+    "lockfileVersion": 1,
+    "requires": True,
+    "dependencies": {
+        "@scope/pkg": {"version": "1.0.0", "integrity": "sha512-SSSS"},
+        "accepts": {
+            "version": "1.3.8",
+            "integrity": "sha512-AAAA",
+            "requires": {"mime-types": "~2.1.34", "negotiator": "0.6.3"},
+        },
+        "express": {
+            "version": "4.18.0",
+            "resolved": "https://registry.npmjs.org/express/-/express-4.18.0.tgz",
+            "integrity": "sha512-EEEE",
+            "requires": {"accepts": "~1.3.8", "debug": "2.6.9"},
+            "dependencies": {
+                "debug": {
+                    "version": "2.6.9",
+                    "integrity": "sha512-DDDD",
+                    "requires": {"ms": "2.0.0"},
+                    "dependencies": {"ms": {"version": "2.0.0", "integrity": "sha512-MMMM"}},
+                },
+            },
+        },
+        "fork": {"version": "github:someone/fork#0123abc", "from": "github:someone/fork"},
+        "zlib-sync": {"version": "0.1.8", "integrity": "sha512-ZZZZ"},
+    },
+}
+
+
+def _npm_v1_diff(mutate: object, indent: int | str = 2) -> str:
+    new = copy.deepcopy(_NPM_V1_LOCK)
+    mutate(new)  # type: ignore[operator]
+    return _full_diff(json.dumps(_NPM_V1_LOCK, indent=indent), json.dumps(new, indent=indent))
+
+
+class TestNpmLockfileVersion1:
+    """lockfileVersion 1 has no "packages" section, only the "dependencies" tree."""
+
+    def test_bump_of_top_level_package(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["dependencies"]["express"]["version"] = "4.18.2"
+            lock["dependencies"]["express"]["integrity"] = "sha512-FFFF"
+
+        assert parse_changed_packages(_npm_v1_diff(edit), "npm") == [("express", "4.18.2")]
+
+    def test_change_below_the_version_line(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["dependencies"]["accepts"]["integrity"] = "sha512-BBBB"
+
+        assert parse_changed_packages(_npm_v1_diff(edit), "npm") == [("accepts", "1.3.8")]
+
+    def test_change_in_requires_belongs_to_the_package(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["dependencies"]["accepts"]["requires"]["negotiator"] = "0.6.4"
+
+        assert parse_changed_packages(_npm_v1_diff(edit), "npm") == [("accepts", "1.3.8")]
+
+    def test_scoped_package(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["dependencies"]["@scope/pkg"]["version"] = "1.0.1"
+
+        assert parse_changed_packages(_npm_v1_diff(edit), "npm") == [("@scope/pkg", "1.0.1")]
+
+    def test_nested_package_is_named_by_its_install_path(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["dependencies"]["express"]["dependencies"]["debug"]["version"] = "2.6.10"
+
+        assert parse_changed_packages(_npm_v1_diff(edit), "npm") == [
+            ("express/node_modules/debug", "2.6.10")
+        ]
+
+    def test_doubly_nested_package(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            nested = lock["dependencies"]["express"]["dependencies"]["debug"]["dependencies"]
+            nested["ms"]["version"] = "2.1.3"
+
+        assert parse_changed_packages(_npm_v1_diff(edit), "npm") == [
+            ("express/node_modules/debug/node_modules/ms", "2.1.3")
+        ]
+
+    def test_new_package_reports_only_itself(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["dependencies"]["zzz-new"] = {"version": "1.0.0", "integrity": "sha512-NNNN"}
+
+        # The entry before it gains a trailing comma; that is not a change to it.
+        assert parse_changed_packages(_npm_v1_diff(edit), "npm") == [("zzz-new", "1.0.0")]
+
+    def test_new_nested_package_does_not_implicate_its_neighbour(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["dependencies"]["express"]["dependencies"]["qs"] = {"version": "6.11.0"}
+
+        assert parse_changed_packages(_npm_v1_diff(edit), "npm") == [
+            ("express/node_modules/qs", "6.11.0")
+        ]
+
+    def test_removed_package_is_not_a_change(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            del lock["dependencies"]["accepts"]
+
+        assert parse_changed_packages(_npm_v1_diff(edit), "npm") == []
+
+    def test_root_fields_are_not_packages(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["version"] = "1.0.1"
+
+        assert parse_changed_packages(_npm_v1_diff(edit), "npm") == []
+
+    def test_git_reference_has_no_version_to_verify(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["dependencies"]["fork"]["version"] = "github:someone/fork#4567def"
+
+        assert parse_changed_packages(_npm_v1_diff(edit), "npm") == [("fork", "")]
+
+    @pytest.mark.parametrize("indent", [4, "\t"])
+    def test_other_indentation(self, indent: int | str) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["dependencies"]["express"]["dependencies"]["debug"]["version"] = "2.6.10"
+
+        assert parse_changed_packages(_npm_v1_diff(edit, indent), "npm") == [
+            ("express/node_modules/debug", "2.6.10")
+        ]
+
+    def test_whole_file_added(self) -> None:
+        diff = _full_diff("", json.dumps(_NPM_V1_LOCK, indent=2))
+        assert parse_changed_packages(diff, "npm") == [
+            ("@scope/pkg", "1.0.0"),
+            ("accepts", "1.3.8"),
+            ("express", "4.18.0"),
+            ("express/node_modules/debug", "2.6.9"),
+            ("express/node_modules/debug/node_modules/ms", "2.0.0"),
+            ("fork", ""),
+            ("zlib-sync", "0.1.8"),
+        ]
+
+    def test_nested_package_resolves_to_its_install_directory(self, tmp_path: Path) -> None:
+        nested = tmp_path / "node_modules" / "express" / "node_modules" / "debug"
+        nested.mkdir(parents=True)
+        (nested / "package.json").write_text('{"version": "2.6.10"}', encoding="utf-8")
+        lock = str(tmp_path / "package-lock.json")
+        assert resolve_package_dir("express/node_modules/debug", "npm", lock) == nested
+
+
+class TestNpmLockfileVersionUnknown:
+    def _diff(self, version: int) -> str:
+        old = {"name": "demo", "lockfileVersion": version, "packages": {}}
+        new = copy.deepcopy(old)
+        new["packages"] = {"node_modules/express": {"version": "4.18.2"}}
+        return _full_diff(json.dumps(old, indent=2), json.dumps(new, indent=2))
+
+    def test_reported_rather_than_guessed_at(self) -> None:
+        problems: list[str] = []
+        assert parse_changed_packages(self._diff(4), "npm", problems) == []
+        assert problems == [
+            "lockfileVersion 4 is not one heckler can read,"
+            " so the packages it changes were not scanned"
+        ]
+
+    @pytest.mark.parametrize("version", [2, 3])
+    def test_known_versions_are_read(self, version: int) -> None:
+        problems: list[str] = []
+        packages = parse_changed_packages(self._diff(version), "npm", problems)
+        assert (packages, problems) == ([("express", "4.18.2")], [])
+
+    def test_v2_keeps_ignoring_its_legacy_dependencies_mirror(self) -> None:
+        def edit(lock: dict) -> None:  # type: ignore[type-arg]
+            lock["dependencies"]["express"]["version"] = "4.18.2"
+
+        assert parse_changed_packages(_npm_diff(edit), "npm") == []

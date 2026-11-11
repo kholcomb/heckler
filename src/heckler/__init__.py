@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from ._version import __version__
 from .characters import Severity, ThreatCategory
-from .config import Config, load_config
+from .config import Config, ConfigError, load_config
 from .scanner import Finding, Scanner
 
 __all__ = [
     "__version__",
     "Config",
+    "ConfigError",
     "Finding",
     "Scanner",
     "Severity",
@@ -35,6 +36,7 @@ def scan(
         severity_threshold=config.severity_threshold,
         exclude_patterns=config.exclude_patterns,
         allow_bom=config.allow_bom,
+        allow_emoji=config.allow_emoji,
         scan_deps=config.scan_deps,
     )
     return scanner.scan_path(P(path))

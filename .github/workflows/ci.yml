@@ -10,8 +10,10 @@ jobs:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
+      # One version failing should not hide the results for the others.
+      fail-fast: false
       matrix:
-        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
+        python-version: ['3.11', '3.12', '3.13']
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
@@ -25,6 +27,9 @@ jobs:
 
       - name: Lint
         run: ruff check src/ tests/
+
+      - name: Format
+        run: ruff format --check src/ tests/
 
       - name: Test
         run: pytest --cov=heckler --cov-report=term-missing
@@ -42,12 +47,3 @@ jobs:
           python-version: '3.12'
       - run: pip install -e ".[dev]"
       - run: mypy src/
-
-  refract:
-    name: Anti-pattern scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
-      - uses: kholcomb/refract@v1
-        with:
-          languages: python

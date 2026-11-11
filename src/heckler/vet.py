@@ -19,11 +19,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+import zlib
 from pathlib import Path
 
 from .config import Config
 from .formatters import get_formatter
-from .scanner import Scanner
+from .scanner import Finding, Scanner
 
 _NPM_REGISTRY = "https://registry.npmjs.org"
 _PYPI_REGISTRY = "https://pypi.org"
@@ -40,15 +41,15 @@ def detect_registry(spec: str) -> str:
 
     Returns 'npm', 'pypi', or 'unknown'.
     """
-    if '==' in spec or '>=' in spec or '<=' in spec or '~=' in spec:
-        return 'pypi'
+    if "==" in spec or ">=" in spec or "<=" in spec or "~=" in spec:
+        return "pypi"
     # Scoped npm: @scope/name or @scope/name@version
-    if spec.startswith('@'):
-        return 'npm'
+    if spec.startswith("@"):
+        return "npm"
     # Unscoped npm with version: name@version
-    if '@' in spec:
-        return 'npm'
-    return 'unknown'
+    if "@" in spec:
+        return "npm"
+    return "unknown"
 
 
 def _parse_spec(spec: str, registry: str) -> tuple[str, str | None]:
@@ -58,31 +59,31 @@ def _parse_spec(spec: str, registry: str) -> tuple[str, str | None]:
     specifiers (``>=``, ``~=``, etc.) cause a hard exit because the
     registry JSON API has no solver.
     """
-    if registry == 'npm':
-        if spec.startswith('@'):
+    if registry == "npm":
+        if spec.startswith("@"):
             # Scoped: @scope/name@version — split on the *last* @
             rest = spec[1:]
-            if '@' in rest:
-                idx = rest.rindex('@')
-                return '@' + rest[:idx], rest[idx + 1:] or None
+            if "@" in rest:
+                idx = rest.rindex("@")
+                return "@" + rest[:idx], rest[idx + 1 :] or None
             return spec, None
-        if '@' in spec:
-            idx = spec.index('@')
-            return spec[:idx], spec[idx + 1:] or None
+        if "@" in spec:
+            idx = spec.index("@")
+            return spec[:idx], spec[idx + 1 :] or None
         return spec, None
 
     # PyPI
-    for op in ('>=', '<=', '~=', '!='):
+    for op in (">=", "<=", "~=", "!="):
         if op in spec:
             base = spec.split(op)[0].strip()
             print(
-                f'Error: --vet requires an exact version (e.g., {base}==X.Y.Z). '
-                f'Version ranges are not supported with direct registry fetching.',
+                f"Error: --vet requires an exact version (e.g., {base}==X.Y.Z). "
+                f"Version ranges are not supported with direct registry fetching.",
                 file=sys.stderr,
             )
             sys.exit(2)
-    if '==' in spec:
-        name, version = spec.split('==', 1)
+    if "==" in spec:
+        name, version = spec.split("==", 1)
         return name.strip(), version.strip()
     return spec.strip(), None
 
@@ -108,7 +109,7 @@ def _download_file(url: str, dest: Path) -> None:
     req = urllib.request.Request(url)
     with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310
         total = 0
-        with open(dest, 'wb') as f:
+        with open(dest, "wb") as f:
             while True:
                 chunk = resp.read(8192)
                 if not chunk:
@@ -127,8 +128,8 @@ def _download_file(url: str, dest: Path) -> None:
 def _verify_checksum(path: Path, algorithm: str, expected: str, label: str) -> None:
     """Verify a downloaded file's checksum. Exits on mismatch."""
     h = hashlib.new(algorithm)
-    with open(path, 'rb') as f:
-        for chunk in iter(lambda: f.read(8192), b''):
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     actual = h.hexdigest()
     if actual != expected:
@@ -145,10 +146,11 @@ def _verify_checksum(path: Path, algorithm: str, expected: str, label: str) -> N
 # npm
 # ---------------------------------------------------------------------------
 
+
 def _download_npm(name: str, version: str | None, tmpdir: str) -> Path:
     """Fetch an npm tarball directly from the public registry."""
-    encoded = urllib.parse.quote(name, safe='@')
-    tag = version if version else 'latest'
+    encoded = urllib.parse.quote(name, safe="@")
+    tag = version if version else "latest"
     url = f"{_NPM_REGISTRY}/{encoded}/{tag}"
 
     try:
@@ -171,7 +173,7 @@ def _download_npm(name: str, version: str | None, tmpdir: str) -> Path:
     # Extract expected checksum from registry metadata
     expected_shasum = dist.get("shasum") if isinstance(dist, dict) else None
 
-    filename: str = tarball_url.rsplit('/', 1)[-1]
+    filename: str = tarball_url.rsplit("/", 1)[-1]
     dest: Path = Path(tmpdir) / filename
 
     try:
@@ -190,12 +192,26 @@ def _download_npm(name: str, version: str | None, tmpdir: str) -> Path:
 # PyPI
 # ---------------------------------------------------------------------------
 
-def _download_pypi(name: str, version: str | None, tmpdir: str) -> Path:
-    """Fetch a PyPI package directly from the public registry.
 
-    Prefers wheels (no code execution) over sdists.
+def _download_pypi(
+    name: str,
+    version: str | None,
+    tmpdir: str,
+    not_scanned: list[tuple[str, str]] | None = None,
+) -> list[Path]:
+    """Fetch every file of a PyPI release directly from the public registry.
+
+    Which of them pip installs depends on the machine: a wheel if one fits
+    the platform and Python version, the sdist otherwise. They are built
+    separately and nothing makes their contents agree, so one clean file
+    says nothing about the others. All of them are downloaded, the sdist
+    first. Downloading and unpacking runs no package code.
+
+    A file in a format heckler cannot unpack (an old ``.exe`` or ``.msi``
+    installer, say) is not downloaded; its name and the reason are added to
+    *not_scanned*.
     """
-    encoded = urllib.parse.quote(name, safe='')
+    encoded = urllib.parse.quote(name, safe="")
     if version:
         url = f"{_PYPI_REGISTRY}/pypi/{encoded}/{version}/json"
     else:
@@ -217,83 +233,129 @@ def _download_pypi(name: str, version: str | None, tmpdir: str) -> Path:
         print(f'Error: No downloads available for "{name}".', file=sys.stderr)
         sys.exit(2)
 
-    def _is_type(u: object, t: str) -> bool:
-        return isinstance(u, dict) and u.get("packagetype") == t
+    # (not an sdist, filename, url, sha256): sorts the sdist first.
+    files: list[tuple[bool, str, str, object]] = []
+    for entry in urls:
+        download_url = entry.get("url") if isinstance(entry, dict) else None
+        filename = entry.get("filename") if isinstance(entry, dict) else None
+        if (
+            not isinstance(download_url, str)
+            or not isinstance(filename, str)
+            # The name becomes a path under tmpdir, so it has to be a bare name.
+            or "/" in filename
+            or "\\" in filename
+            or filename in ("", ".", "..")
+        ):
+            print(f'Error: Malformed download metadata for "{name}".', file=sys.stderr)
+            sys.exit(2)
+        digests = entry.get("digests")
+        sha256 = digests.get("sha256") if isinstance(digests, dict) else None
+        files.append((entry.get("packagetype") != "sdist", filename, download_url, sha256))
 
-    wheel = next((u for u in urls if _is_type(u, "bdist_wheel")), None)
-    sdist = next((u for u in urls if _is_type(u, "sdist")), None)
-    chosen = wheel or sdist
-    if not isinstance(chosen, dict):
-        print(f'Error: No suitable download found for "{name}".', file=sys.stderr)
-        sys.exit(2)
+    download_dir = Path(tmpdir) / "downloads"
+    download_dir.mkdir(exist_ok=True)
+    archives: list[Path] = []
+    for _, filename, download_url, sha256 in sorted(files, key=lambda item: item[:2]):
+        dest = download_dir / filename
+        if not can_extract(dest):
+            if not_scanned is not None:
+                not_scanned.append((filename, "heckler cannot unpack this type of file"))
+            continue
+        try:
+            _download_file(download_url, dest)
+        except (urllib.error.URLError, OSError) as e:
+            print(f"Error: Failed to download {filename}: {e}", file=sys.stderr)
+            sys.exit(2)
 
-    download_url = chosen.get("url")
-    filename = chosen.get("filename")
-    if not isinstance(download_url, str) or not isinstance(filename, str):
-        print(f'Error: Malformed download metadata for "{name}".', file=sys.stderr)
-        sys.exit(2)
+        if isinstance(sha256, str):
+            _verify_checksum(dest, "sha256", sha256, f"{filename} (pypi)")
+        archives.append(dest)
 
-    # Extract expected SHA-256 from registry metadata
-    digests = chosen.get("digests")
-    expected_sha256 = digests.get("sha256") if isinstance(digests, dict) else None
-
-    dest = Path(tmpdir) / filename
-    try:
-        _download_file(download_url, dest)
-    except (urllib.error.URLError, OSError) as e:
-        print(f"Error: Failed to download PyPI package: {e}", file=sys.stderr)
-        sys.exit(2)
-
-    if isinstance(expected_sha256, str):
-        _verify_checksum(dest, "sha256", expected_sha256, f"{name} (pypi)")
-
-    return dest
+    return archives
 
 
 # ---------------------------------------------------------------------------
 # Public download entry point
 # ---------------------------------------------------------------------------
 
-def download_package(spec: str, registry: str, tmpdir: str) -> Path:
-    """Download a package archive to *tmpdir* via registry API.
 
-    Returns the path to the downloaded archive file.
+def download_package(
+    spec: str,
+    registry: str,
+    tmpdir: str,
+    not_scanned: list[tuple[str, str]] | None = None,
+) -> list[Path]:
+    """Download a package's archives to *tmpdir* via registry API.
+
+    Returns the paths of the downloaded files: the one tarball of an npm
+    version, or every file of a PyPI release that heckler can unpack. The
+    ones it cannot are named in *not_scanned*.
     """
     name, version = _parse_spec(spec, registry)
 
-    if registry == 'npm':
-        return _download_npm(name, version, tmpdir)
-    return _download_pypi(name, version, tmpdir)
+    if registry == "npm":
+        return [_download_npm(name, version, tmpdir)]
+    return _download_pypi(name, version, tmpdir, not_scanned)
 
 
 # ---------------------------------------------------------------------------
-# Archive extraction (unchanged)
+# Archive extraction
 # ---------------------------------------------------------------------------
+
+# How many of the files left out as binary the report names.
+_MAX_BINARY_LISTED = 20
+
+_TAR_SUFFIXES = (".tgz", ".tar.gz", ".tar.bz2", ".tar")
+_ZIP_SUFFIXES = (".whl", ".zip", ".egg")
+
+
+def can_extract(archive_path: Path) -> bool:
+    """Whether :func:`extract_package` knows the archive's format."""
+    return archive_path.name.lower().endswith(_TAR_SUFFIXES + _ZIP_SUFFIXES)
+
 
 def extract_package(archive_path: Path, tmpdir: str) -> Path:
     """Extract a package archive safely. Guards against path traversal,
-    symlink attacks, and zip bombs."""
-    extract_dir = Path(tmpdir) / 'extracted'
-    extract_dir.mkdir(exist_ok=True)
-    resolved_root = extract_dir.resolve()
+    symlink attacks, and zip bombs.
 
-    name = archive_path.name.lower()
+    Each archive gets a directory of its own under *tmpdir*, so several can
+    be unpacked side by side.
+    """
     try:
-        if name.endswith(('.tgz', '.tar.gz', '.tar.bz2', '.tar')):
-            _safe_tar_extract(archive_path, extract_dir, resolved_root)
-        elif name.endswith(('.whl', '.zip')):
-            _safe_zip_extract(archive_path, extract_dir, resolved_root)
-        else:
-            raise _UnsafeArchiveError(f"Unsupported archive type: {archive_path.name}")
-    except (tarfile.TarError, zipfile.BadZipFile, _UnsafeArchiveError) as e:
+        return _unpack(archive_path, tmpdir)
+    except _ARCHIVE_ERRORS as e:
         print(f"Error: Failed to extract package archive: {e}", file=sys.stderr)
         sys.exit(2)
 
+
+def _unpack(archive_path: Path, tmpdir: str) -> Path:
+    """extract_package() without the exit: an archive that cannot be unpacked raises."""
+    extract_dir = Path(tmpdir) / "extracted" / archive_path.name
+    extract_dir.mkdir(parents=True, exist_ok=True)
+    resolved_root = extract_dir.resolve()
+
+    if not can_extract(archive_path):
+        raise _UnsafeArchiveError(f"Unsupported archive type: {archive_path.name}")
+    if archive_path.name.lower().endswith(_ZIP_SUFFIXES):
+        _safe_zip_extract(archive_path, extract_dir, resolved_root)
+    else:
+        _safe_tar_extract(archive_path, extract_dir, resolved_root)
     return extract_dir
 
 
 class _UnsafeArchiveError(Exception):
     """Raised when an archive contains path traversal or symlink attacks."""
+
+
+# What unpacking an archive raises when the archive is damaged or unsafe.
+_ARCHIVE_ERRORS = (
+    tarfile.TarError,
+    zipfile.BadZipFile,
+    zlib.error,
+    EOFError,
+    OSError,
+    _UnsafeArchiveError,
+)
 
 
 # 50 MB uncompressed limit per file to guard against zip bombs
@@ -305,42 +367,34 @@ _MAX_TOTAL_SIZE = 500 * 1024 * 1024
 def _safe_tar_extract(archive_path: Path, extract_dir: Path, resolved_root: Path) -> None:
     """Extract a tar archive with path traversal and symlink protection."""
     with tarfile.open(archive_path) as tf:
-        # Python 3.12+ has filter='data' which handles this natively.
-        # For 3.9-3.11, we validate manually.
+        # filter='data' handles this natively. Python 3.11 has it from
+        # 3.11.4; before that, we validate manually.
         try:
-            tf.extractall(extract_dir, filter='data')
+            tf.extractall(extract_dir, filter="data")
             return
         except TypeError:
-            # filter parameter not supported (Python < 3.12)
+            # filter parameter not supported (Python 3.11.0 to 3.11.3)
             pass
         except tarfile.TarError as e:
-            # Python 3.12+ filter='data' raises FilterError subclasses for
+            # filter='data' raises FilterError subclasses for
             # path traversal, symlinks, etc. Wrap as our error type.
             raise _UnsafeArchiveError(f"Unsafe archive: {e}") from e
 
-        # Manual safe extraction for Python 3.9-3.11
+        # Manual safe extraction for a Python without the filter
         members = tf.getmembers()
         total_size = 0
         for member in members:
             _validate_archive_member(member.name, resolved_root, extract_dir)
 
             if member.issym() or member.islnk():
-                raise _UnsafeArchiveError(
-                    f"Archive contains symlink/hardlink: {member.name}"
-                )
+                raise _UnsafeArchiveError(f"Archive contains symlink/hardlink: {member.name}")
             if member.isdev():
-                raise _UnsafeArchiveError(
-                    f"Archive contains device file: {member.name}"
-                )
+                raise _UnsafeArchiveError(f"Archive contains device file: {member.name}")
             if member.size > _MAX_EXTRACT_SIZE:
-                raise _UnsafeArchiveError(
-                    f"File too large ({member.size} bytes): {member.name}"
-                )
+                raise _UnsafeArchiveError(f"File too large ({member.size} bytes): {member.name}")
             total_size += member.size
             if total_size > _MAX_TOTAL_SIZE:
-                raise _UnsafeArchiveError(
-                    f"Total extraction size exceeds {_MAX_TOTAL_SIZE} bytes"
-                )
+                raise _UnsafeArchiveError(f"Total extraction size exceeds {_MAX_TOTAL_SIZE} bytes")
 
         # Safe to extract — reuse validated member list
         safe_members = [m for m in members if m.isfile() or m.isdir()]
@@ -349,7 +403,7 @@ def _safe_tar_extract(archive_path: Path, extract_dir: Path, resolved_root: Path
 
 def _safe_zip_extract(archive_path: Path, extract_dir: Path, resolved_root: Path) -> None:
     """Extract a zip archive with path traversal protection."""
-    with zipfile.ZipFile(archive_path, 'r') as zf:
+    with zipfile.ZipFile(archive_path, "r") as zf:
         total_size = 0
         for info in zf.infolist():
             _validate_archive_member(info.filename, resolved_root, extract_dir)
@@ -360,16 +414,12 @@ def _safe_zip_extract(archive_path: Path, extract_dir: Path, resolved_root: Path
                 )
             total_size += info.file_size
             if total_size > _MAX_TOTAL_SIZE:
-                raise _UnsafeArchiveError(
-                    f"Total extraction size exceeds {_MAX_TOTAL_SIZE} bytes"
-                )
+                raise _UnsafeArchiveError(f"Total extraction size exceeds {_MAX_TOTAL_SIZE} bytes")
 
             # Check for symlinks in zip (external_attr encodes Unix mode)
             unix_mode = info.external_attr >> 16
             if unix_mode and (unix_mode & 0o120000) == 0o120000:
-                raise _UnsafeArchiveError(
-                    f"Archive contains symlink: {info.filename}"
-                )
+                raise _UnsafeArchiveError(f"Archive contains symlink: {info.filename}")
 
         # All entries validated — extract individually (avoid unfiltered extractall)
         for info in zf.infolist():
@@ -379,21 +429,25 @@ def _safe_zip_extract(archive_path: Path, extract_dir: Path, resolved_root: Path
 def _validate_archive_member(member_name: str, resolved_root: Path, extract_dir: Path) -> None:
     """Reject archive members that would escape the extraction directory."""
     # Normalize and check for path traversal
-    if '..' in member_name.split('/') or '..' in member_name.split('\\'):
-        raise _UnsafeArchiveError(
-            f"Path traversal detected: {member_name}"
-        )
+    if ".." in member_name.split("/") or ".." in member_name.split("\\"):
+        raise _UnsafeArchiveError(f"Path traversal detected: {member_name}")
     # Resolve the target path and verify it's under the extraction root
     target = (extract_dir / member_name).resolve()
     if not target.is_relative_to(resolved_root):
-        raise _UnsafeArchiveError(
-            f"Path escapes extraction directory: {member_name}"
-        )
+        raise _UnsafeArchiveError(f"Path escapes extraction directory: {member_name}")
 
 
 # ---------------------------------------------------------------------------
 # Top-level vet entry point
 # ---------------------------------------------------------------------------
+
+
+def _inside_archive(path: str, archive: Path, extract_dir: Path) -> str:
+    """Name an extracted file by the archive it came from and its path in it."""
+    with contextlib.suppress(ValueError):
+        path = Path(path).relative_to(extract_dir).as_posix()
+    return f"{archive.name}/{path}"
+
 
 def vet_package(
     spec: str,
@@ -402,12 +456,20 @@ def vet_package(
     output_format: str = "text",
     color: bool = True,
     quiet: bool = False,
+    allow_unscanned: bool = False,
 ) -> int:
-    """Download, scan, and report on a package. Returns exit code."""
+    """Download, scan, and report on a package. Returns exit code.
+
+    Every archive the registry offers for the version is scanned, and every
+    text file in each, whatever its extension: a package's executable code
+    is not confined to source files (``bin`` scripts without an extension,
+    ``.pth`` files). Exit code 2 means some of it could not be scanned,
+    unless *allow_unscanned* is set.
+    """
     registry = registry_override or detect_registry(spec)
-    if registry == 'unknown':
+    if registry == "unknown":
         print(
-            f"Error: Cannot determine registry for \"{spec}\". "
+            f'Error: Cannot determine registry for "{spec}". '
             f"Use --registry npm or --registry pypi.",
             file=sys.stderr,
         )
@@ -416,47 +478,94 @@ def vet_package(
     # Warn about public-only registry support
     print(_PRIVATE_REGISTRY_WARNING, file=sys.stderr)
 
-    with tempfile.TemporaryDirectory(prefix='heckler-vet-') as tmpdir:
-        archive = download_package(spec, registry, tmpdir)
-        extract_dir = extract_package(archive, tmpdir)
+    findings: list[Finding] = []
+    scanned: list[str] = []
+    not_scanned: list[tuple[str, str]] = []
+    binary: list[str] = []
+
+    with tempfile.TemporaryDirectory(prefix="heckler-vet-") as tmpdir:
+        archives = download_package(spec, registry, tmpdir, not_scanned)
 
         scanner = Scanner(
             skip_dirs=frozenset(),  # Don't skip anything in extracted package
-            text_extensions=config.text_extensions,
+            all_text=True,  # nor any text file, whatever it is called
             severity_threshold=config.severity_threshold,
             exclude_patterns=config.exclude_patterns,
             allow_bom=config.allow_bom,
+            allow_emoji=config.allow_emoji,
             scan_deps=True,
         )
-        findings = scanner.scan_path(extract_dir)
 
-        # Rewrite file paths to be relative to package root
-        for f in findings:
-            with contextlib.suppress(ValueError):
-                f.file = str(Path(f.file).relative_to(extract_dir))
-            f.source = "dependency"
-            f.package = spec
+        for archive in archives:
+            try:
+                extract_dir = _unpack(archive, tmpdir)
+            except _ARCHIVE_ERRORS as e:
+                # Part of the package that nobody looked at. The report says
+                # so, and the other files of the package are still scanned.
+                not_scanned.append((archive.name, f"it could not be unpacked ({e})"))
+                continue
+            already_skipped, already_binary = len(scanner.skipped), len(scanner.binary)
+            for f in scanner.scan_path(extract_dir):
+                f.file = _inside_archive(f.file, archive, extract_dir)
+                f.source = "dependency"
+                f.package = spec
+                findings.append(f)
+            scanned.append(archive.name)
+            not_scanned.extend(
+                (_inside_archive(path, archive, extract_dir), reason)
+                for path, reason in scanner.skipped[already_skipped:]
+            )
+            binary.extend(
+                _inside_archive(path, archive, extract_dir)
+                for path in scanner.binary[already_binary:]
+            )
+
+    for name, reason in not_scanned:
+        print(f"Warning: {name} was not scanned: {reason}", file=sys.stderr)
 
     formatter = get_formatter(output_format)
     output = formatter(findings, color=color, quiet=quiet)
 
     # Prepend vet summary header
     if output_format == "text":
+        files = f"{len(scanned)} file(s) scanned"
         if findings:
             counts: dict[str, int] = {}
             for f in findings:
                 sev = f.severity.value.upper()
                 counts[sev] = counts.get(sev, 0) + 1
-            count_str = ', '.join(f"{v} {k}" for k, v in counts.items())
-            header = (
-                f"[VET] {spec} ({registry}) — {len(findings)} finding(s)"
-                f" ({count_str}). DO NOT INSTALL."
-            )
+            count_str = ", ".join(f"{v} {k}" for k, v in counts.items())
+            verdict = f"{len(findings)} finding(s) ({count_str}). DO NOT INSTALL."
+        elif not_scanned:
+            verdict = f"0 findings, {len(not_scanned)} file(s) not scanned. INCOMPLETE."
         else:
-            header = f"[VET] {spec} ({registry}) — 0 findings. CLEAN."
-        print(header)
+            verdict = "0 findings. CLEAN."
+        print(f"[VET] {spec} ({registry}) — {files}, {verdict}")
+        if not quiet:
+            for name in scanned:
+                print(f"  scanned: {name}")
+            for name, _reason in not_scanned:
+                print(f"  not scanned: {name}")
+            # Content decides what is binary, and the package wrote the
+            # content. Naming the files lets a reader see what that left out.
+            for name in binary[:_MAX_BINARY_LISTED]:
+                print(f"  binary, not scanned: {name}")
+            if len(binary) > _MAX_BINARY_LISTED:
+                print(f"  binary, not scanned: {len(binary) - _MAX_BINARY_LISTED} more file(s)")
 
-    if output:
+    # "Nothing found" would be the wrong thing to say when part of the
+    # package was never looked at; the header and warnings tell that story.
+    nothing_was_checked = output_format == "text" and not_scanned and not findings
+    if output and not nothing_was_checked:
         print(output)
 
-    return 1 if findings else 0
+    if findings:
+        return 1
+    if not_scanned and not allow_unscanned:
+        print(
+            f"Error: {len(not_scanned)} file(s) of {spec} could not be scanned (see the"
+            " warnings above). Pass --allow-unscanned to accept this.",
+            file=sys.stderr,
+        )
+        return 2
+    return 0

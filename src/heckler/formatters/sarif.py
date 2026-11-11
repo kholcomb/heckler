@@ -75,6 +75,18 @@ _CATEGORY_RULES = {
         "helpUri": "https://trojansource.codes/",
         "properties": {"tags": ["security", "invisible-format"]},
     },
+    ThreatCategory.CONTROL_CHARACTER: {
+        "id": "glassworm/control-character",
+        "name": "ControlCharacter",
+        "shortDescription": {"text": "Control character detected"},
+        "fullDescription": {
+            "text": "Control characters other than tab and line endings do not belong in "
+            "source text. Escape sequences can hide or rewrite what a terminal shows, and "
+            "a NUL byte makes review tools treat the file as binary and hide its diff."
+        },
+        "helpUri": "https://trojansource.codes/",
+        "properties": {"tags": ["security", "control-character"]},
+    },
     ThreatCategory.INVISIBLE_IDENTIFIER: {
         "id": "glassworm/invisible-identifier",
         "name": "InvisibleIdentifier",
@@ -95,8 +107,7 @@ def format_sarif(findings: list[Finding], **kwargs: object) -> str:
     used_categories = {f.category for f in findings}
     rules = [_CATEGORY_RULES[cat] for cat in ThreatCategory if cat in used_categories]
     rule_index = {
-        cat: i
-        for i, cat in enumerate(cat for cat in ThreatCategory if cat in used_categories)
+        cat: i for i, cat in enumerate(cat for cat in ThreatCategory if cat in used_categories)
     }
 
     results = []

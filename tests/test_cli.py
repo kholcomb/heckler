@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from heckler._version import __version__
 from heckler.cli import main
 
 
@@ -23,6 +24,7 @@ class TestCLI:
 
     def test_json_format(self, tmp_scan_dir: Path, capsys: object) -> None:
         import json
+
         main(["--format", "json", str(tmp_scan_dir)])
         captured = capsys.readouterr()  # type: ignore[attr-defined]
         data = json.loads(captured.out)
@@ -32,6 +34,7 @@ class TestCLI:
 
     def test_sarif_format(self, tmp_scan_dir: Path, capsys: object) -> None:
         import json
+
         main(["--format", "sarif", str(tmp_scan_dir)])
         captured = capsys.readouterr()  # type: ignore[attr-defined]
         sarif = json.loads(captured.out)
@@ -47,14 +50,16 @@ class TestCLI:
     def test_scan_deps_flag(self, tmp_path: Path) -> None:
         nm = tmp_path / "node_modules" / "pkg"
         nm.mkdir(parents=True)
-        (nm / "index.js").write_text('\uFE01', encoding='utf-8')
+        (nm / "index.js").write_text("\ufe01", encoding="utf-8")
         result = main(["--ci", "--scan-deps", str(tmp_path)])
         assert result == 1
 
     def test_version(self, capsys: object) -> None:
         import pytest
+
         with pytest.raises(SystemExit, match="0"):  # type: ignore[attr-defined]
             main(["--version"])
+        assert capsys.readouterr().out == f"heckler {__version__}\n"  # type: ignore[attr-defined]
 
     def test_quiet_mode(self, tmp_scan_dir: Path, capsys: object) -> None:
         main(["--quiet", str(tmp_scan_dir)])

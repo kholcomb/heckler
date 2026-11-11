@@ -1,0 +1,5 @@
+# Code owners are asked to review every pull request that touches the paths
+# they own. The last matching pattern wins.
+# https://docs.github.com/articles/about-code-owners
+
+*       @kholcomb

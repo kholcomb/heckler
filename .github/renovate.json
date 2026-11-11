@@ -1,0 +1,35 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices",
+    ":enablePreCommit",
+    ":semanticCommits",
+    "schedule:weekly"
+  ],
+  "labels": ["dependencies"],
+  "ignorePaths": ["**/tests/**"],
+  "github-actions": {
+    "managerFilePatterns": ["/^examples/.+\\.ya?ml$/"]
+  },
+  "packageRules": [
+    {
+      "description": "Take a PyPI release only once it is three days old, so one that is yanked or found to be malicious never reaches a pull request.",
+      "matchDatasources": ["pypi"],
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "ruff runs from the dev extra in CI and from the commit hook. One pull request moves both, so the two never disagree about formatting.",
+      "matchPackageNames": ["ruff", "astral-sh/ruff-pre-commit"],
+      "groupName": "ruff",
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "Say what a failing check means on a regex update.",
+      "matchManagers": ["pep621"],
+      "matchPackageNames": ["regex"],
+      "prBodyNotes": [
+        "If `tests/test_unicode_data.py` fails on this pull request, the new release carries a newer Unicode version. The failure prints the table to paste into `src/heckler/characters.py`."
+      ]
+    }
+  ]
+}
