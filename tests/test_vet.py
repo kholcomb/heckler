@@ -540,6 +540,35 @@ class TestVetPackage:
         serve([_zip(tmp_path / "pkg-1.0-py3-none-any.whl", {"pkg/__init__.py": planted})])
         assert self._vet() == 1
 
+    def test_damaged_archive_is_reported_as_incomplete(
+        self, tmp_path: Path, serve: Serve, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        damaged = tmp_path / "pkg-1.0.0.tgz"
+        damaged.write_bytes(b"this is not a gzip file")
+        serve([damaged])
+
+        assert self._vet("pkg@1.0.0") == 2
+        captured = capsys.readouterr()
+        assert "0 file(s) scanned, 0 findings, 1 file(s) not scanned. INCOMPLETE." in captured.out
+        assert "  not scanned: pkg-1.0.0.tgz" in captured.out
+        assert "CLEAN" not in captured.out
+        assert "Warning: pkg-1.0.0.tgz was not scanned: it could not be unpacked" in captured.err
+
+    def test_other_files_are_scanned_when_one_archive_is_damaged(
+        self, tmp_path: Path, serve: Serve, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        planted = f"token = '{PLANTED_SELECTORS}'\n".encode()
+        sdist = _tar_gz(tmp_path / "pkg-1.0.tar.gz", {"pkg-1.0/pkg/__init__.py": planted})
+        damaged = tmp_path / "pkg-1.0-py3-none-any.whl"
+        damaged.write_bytes(b"PK this is not a zip file")
+        serve([sdist, damaged])
+
+        assert self._vet() == 1
+        out = capsys.readouterr().out
+        assert "1 file(s) scanned" in out
+        assert "  scanned: pkg-1.0.tar.gz" in out
+        assert "  not scanned: pkg-1.0-py3-none-any.whl" in out
+
     def test_file_that_could_not_be_unpacked_fails_the_vet(
         self, tmp_path: Path, serve: Serve, capsys: pytest.CaptureFixture[str]
     ) -> None:

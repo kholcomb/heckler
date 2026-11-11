@@ -349,29 +349,104 @@ def _parse_requirement(line: str) -> tuple[str, str] | None:
     return name, version
 
 
+# "-e" in front of a URL or path installs it in editable mode.
+_EDITABLE_RE = re.compile(r"(?:-e|--editable)(?:\s+|=)")
+# The name pip gives a project installed from a URL: "...#egg=name".
+_EGG_RE = re.compile(r"[#&]egg=([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)(?=$|[&\[])")
+_SDIST_SUFFIXES = (".tar.gz", ".tgz", ".tar.bz2", ".tar.xz", ".zip")
+_PATH_SEPARATOR_RE = re.compile(r"[/\\]")
+_PATH_STARTS = (".", "/", "~")
+
+
+def _split_reference(text: str) -> tuple[str, bool]:
+    """Split a URL or path line into the URL or path and whether the rest is well formed."""
+    target, _, rest = text.partition(" ")
+    return target, _REQUIREMENT_END_RE.match(rest.lstrip()) is not None
+
+
+def _parse_reference(text: str) -> tuple[str, str] | None:
+    """Read a URL or path requirement as ``(name, version)``, or None if it names no package.
+
+    The name comes from an ``#egg=`` fragment, or from the file name of a
+    wheel or source archive, which gives the version as well. A URL or path
+    with neither does not say what it installs.
+    """
+    target, well_formed = _split_reference(text)
+    if not well_formed:
+        return None
+    egg = _EGG_RE.search(target)
+    if egg:
+        return egg.group(1).lower(), ""
+    location = re.split(r"[#?]", target, maxsplit=1)[0]
+    filename = _PATH_SEPARATOR_RE.split(location)[-1]
+    if filename.lower().endswith(".whl"):
+        # name-version-python-abi-platform, with an optional build tag after the version
+        fields = filename[: -len(".whl")].split("-")
+        return (fields[0].lower(), fields[1]) if len(fields) in (5, 6) else None
+    for suffix in _SDIST_SUFFIXES:
+        if filename.lower().endswith(suffix):
+            name, dash, version = filename[: -len(suffix)].rpartition("-")
+            return (name.lower(), version) if dash and name and version else None
+    return None
+
+
+def _is_project_directory(text: str) -> bool:
+    """True for a relative path that stays inside the project: ``.``, ``./tools/plugin``.
+
+    That is the project's own code, which the scan of the source covers.
+    """
+    target, well_formed = _split_reference(text)
+    if not well_formed or "://" in target or not target.startswith("."):
+        return False
+    if target.lower().endswith((".whl", *_SDIST_SUFFIXES)):
+        return False  # an archive, whatever its name: something is installed from it
+    return ".." not in _PATH_SEPARATOR_RE.split(target)
+
+
 def _parse_pip_diff(diff_text: str, problems: list[str] | None = None) -> list[tuple[str, str]]:
     """Parse a requirements.txt diff for added packages.
 
     Comments, blank lines and options such as ``-r`` and ``--hash`` are
-    passed over. Any other added line that starts like a package name but
-    cannot be read as a requirement, a bare URL for instance, is described
-    in *problems*: it may install something that is then never scanned.
+    passed over, and so is a directory inside the project (``-e .``). A
+    URL or a path is read for the package it names. Any other added line,
+    one that cannot be read as a requirement or a URL or path that names no
+    package, is described in *problems*: it may install something that is
+    then never scanned.
     """
     packages: list[tuple[str, str]] = []
     for line in diff_text.splitlines():
         if not line.startswith("+") or line.startswith("+++"):
             continue
-        text = line[1:].strip()
-        if not _STARTS_WITH_NAME_RE.match(text):
+        added = line[1:].strip()
+        editable = _EDITABLE_RE.match(added)
+        text = added[editable.end() :].strip() if editable else added
+        if (
+            not editable
+            and not _STARTS_WITH_NAME_RE.match(text)
+            and not text.startswith(_PATH_STARTS)
+        ):
             continue
-        requirement = _parse_requirement(text)
+        is_reference = (
+            bool(editable) or "://" in text.split(" ")[0] or text.startswith(_PATH_STARTS)
+        )
+
+        requirement = None if editable else _parse_requirement(text)
+        if requirement is None:
+            requirement = _parse_reference(text)
         if requirement is not None:
             packages.append(requirement)
+        elif is_reference and _is_project_directory(text):
+            continue
         elif problems is not None:
-            shown = spell_out(text[:_MAX_SHOWN_LINE])
-            if len(text) > _MAX_SHOWN_LINE:
+            shown = spell_out(added[:_MAX_SHOWN_LINE])
+            if len(added) > _MAX_SHOWN_LINE:
                 shown += "..."
-            problems.append(f'the added line "{shown}" could not be read as a requirement')
+            reason = (
+                "does not say which package it installs"
+                if is_reference
+                else "could not be read as a requirement"
+            )
+            problems.append(f'the added line "{shown}" {reason}')
     return list(dict.fromkeys(packages))
 
 

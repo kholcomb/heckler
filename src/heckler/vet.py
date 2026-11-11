@@ -19,6 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+import zlib
 from pathlib import Path
 
 from .config import Config
@@ -320,26 +321,41 @@ def extract_package(archive_path: Path, tmpdir: str) -> Path:
     Each archive gets a directory of its own under *tmpdir*, so several can
     be unpacked side by side.
     """
+    try:
+        return _unpack(archive_path, tmpdir)
+    except _ARCHIVE_ERRORS as e:
+        print(f"Error: Failed to extract package archive: {e}", file=sys.stderr)
+        sys.exit(2)
+
+
+def _unpack(archive_path: Path, tmpdir: str) -> Path:
+    """extract_package() without the exit: an archive that cannot be unpacked raises."""
     extract_dir = Path(tmpdir) / "extracted" / archive_path.name
     extract_dir.mkdir(parents=True, exist_ok=True)
     resolved_root = extract_dir.resolve()
 
-    try:
-        if not can_extract(archive_path):
-            raise _UnsafeArchiveError(f"Unsupported archive type: {archive_path.name}")
-        if archive_path.name.lower().endswith(_ZIP_SUFFIXES):
-            _safe_zip_extract(archive_path, extract_dir, resolved_root)
-        else:
-            _safe_tar_extract(archive_path, extract_dir, resolved_root)
-    except (tarfile.TarError, zipfile.BadZipFile, _UnsafeArchiveError) as e:
-        print(f"Error: Failed to extract package archive: {e}", file=sys.stderr)
-        sys.exit(2)
-
+    if not can_extract(archive_path):
+        raise _UnsafeArchiveError(f"Unsupported archive type: {archive_path.name}")
+    if archive_path.name.lower().endswith(_ZIP_SUFFIXES):
+        _safe_zip_extract(archive_path, extract_dir, resolved_root)
+    else:
+        _safe_tar_extract(archive_path, extract_dir, resolved_root)
     return extract_dir
 
 
 class _UnsafeArchiveError(Exception):
     """Raised when an archive contains path traversal or symlink attacks."""
+
+
+# What unpacking an archive raises when the archive is damaged or unsafe.
+_ARCHIVE_ERRORS = (
+    tarfile.TarError,
+    zipfile.BadZipFile,
+    zlib.error,
+    EOFError,
+    OSError,
+    _UnsafeArchiveError,
+)
 
 
 # 50 MB uncompressed limit per file to guard against zip bombs
@@ -481,7 +497,13 @@ def vet_package(
         )
 
         for archive in archives:
-            extract_dir = extract_package(archive, tmpdir)
+            try:
+                extract_dir = _unpack(archive, tmpdir)
+            except _ARCHIVE_ERRORS as e:
+                # Part of the package that nobody looked at. The report says
+                # so, and the other files of the package are still scanned.
+                not_scanned.append((archive.name, f"it could not be unpacked ({e})"))
+                continue
             already_skipped, already_binary = len(scanner.skipped), len(scanner.binary)
             for f in scanner.scan_path(extract_dir):
                 f.file = _inside_archive(f.file, archive, extract_dir)

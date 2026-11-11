@@ -219,6 +219,61 @@ class TestSelectorDensity:
         assert [f.severity for f in findings] == [Severity.CRITICAL] * 11
 
 
+class TestChoicesAcrossAFile:
+    """Wrapping a row gets it under the limit for a line, not under the one for the file."""
+
+    VARIED = f"{WARNING}{VS16} {WARNING} {WARNING}{VS15} {WARNING}\n"  # two selectors a line
+    JOINED = f"{WOMAN}{ZWJ}{LAPTOP} " * 3 + "\n"
+
+    def test_one_emoji_written_three_ways(self) -> None:
+        findings = Scanner().scan_text(self.VARIED * 12)
+        assert [(f.line, f.column, f.codepoint, f.severity) for f in findings] == [
+            (1, 2, 0xFE0F, Severity.LOW)
+        ]
+        name = "24 emoji written with more than one presentation in this file"
+        assert findings[0].char_name == name
+        assert findings[0].category == ThreatCategory.VARIATION_SELECTOR
+
+    def test_one_presentation_throughout_is_fine(self) -> None:
+        assert Scanner().scan_text((f"| {WARNING}{VS16} " * 10 + "|\n") * 30) == []
+
+    def test_ten_strays_are_fine_and_eleven_are_not(self) -> None:
+        styled = (f"{WARNING}{VS16} " * 10 + "\n") * 5
+        assert Scanner().scan_text(styled + f"{WARNING} " * 10) == []
+        assert len(Scanner().scan_text(styled + f"{WARNING} " * 11)) == 1
+
+    def test_each_emoji_is_judged_by_itself(self) -> None:
+        text = (f"{WARNING}{VS16} " * 5 + f"{HEART}{VS15} " * 5 + f"{FIRE} " * 5 + "\n") * 6
+        assert Scanner().scan_text(text) == []
+
+    def test_keycaps_are_not_measured_against_plain_digits(self) -> None:
+        text = (f"1{VS16}{KEYCAP} 2{VS16}{KEYCAP} 3{VS16}{KEYCAP} of 123 and 321\n") * 8
+        assert Scanner().scan_text(text) == []
+
+    def test_many_joiners(self) -> None:
+        findings = Scanner().scan_text(self.JOINED * 17)
+        assert [(f.line, f.column, f.codepoint, f.severity) for f in findings] == [
+            (1, 2, 0x200D, Severity.LOW)
+        ]
+        assert findings[0].char_name == "51 zero width joiners between emoji in this file"
+
+    def test_fewer_joiners_are_fine(self) -> None:
+        assert Scanner().scan_text(self.JOINED * 16) == []
+
+    def test_a_directive_on_a_line_does_not_cover_a_count_over_the_file(self) -> None:
+        text = f"{WARNING}{VS16} // heckler-ignore\n" + self.VARIED * 12
+        assert len(Scanner().scan_text(text)) == 1
+
+    def test_below_the_severity_threshold_nothing_is_reported(self) -> None:
+        scanner = Scanner(severity_threshold=Severity.MEDIUM)
+        assert scanner.scan_text(self.VARIED * 12 + self.JOINED * 17) == []
+
+    def test_with_allow_emoji_off_every_occurrence_is_reported_instead(self) -> None:
+        names = [f.char_name for f in Scanner(allow_emoji=False).scan_text(self.VARIED * 12)]
+        assert len(names) == 24
+        assert not [name for name in names if "in this file" in name]
+
+
 class TestEmojiContext:
     def test_only_selectors_and_joiners_qualify(self) -> None:
         text = f"{WARNING}\u200b"

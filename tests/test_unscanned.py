@@ -256,7 +256,7 @@ class TestLockfilesHecklerCannotRead:
         self, repo: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         (repo / "requirements-dev.txt").write_text(
-            "# tools\nhttps://example.test/pkg-1.0.tar.gz\n", encoding="utf-8"
+            "# tools\nhttps://example.test/download\n", encoding="utf-8"
         )
         _git(repo, "add", "requirements-dev.txt")
         args = ["--scan-deps", "--diff-only", "requirements-dev.txt"]
@@ -264,8 +264,8 @@ class TestLockfilesHecklerCannotRead:
         assert main(["--ci", *args]) == 2
         captured = capsys.readouterr()
         assert (
-            'requirements-dev.txt: the added line "https://example.test/pkg-1.0.tar.gz"'
-            " could not be read as a requirement" in captured.err
+            'requirements-dev.txt: the added line "https://example.test/download"'
+            " does not say which package it installs" in captured.err
         )
         assert main(["--ci", "--allow-unscanned", *args]) == 0
 

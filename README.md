@@ -99,7 +99,7 @@ heckler --vet PACKAGE [--registry npm|pypi]
 | `--format text\|json\|sarif` | Output format (default: text) |
 | `--severity LEVEL` | Minimum severity to report (default: low) |
 | `--scan-deps` | Include dependency directories |
-| `--diff-only` | With `--scan-deps`, only scan packages changed in staged lockfile diffs |
+| `--diff-only` | With `--scan-deps`, only scan the packages changed in the lockfiles given as paths |
 | `--allow-unscanned` | Do not fail (exit code 2) over what could not be scanned; it is still named in a warning. See the exit codes below |
 | `--no-suppress` | Ignore `heckler-ignore` comments and report what they hide |
 | `--vet PACKAGE` | Download and scan a package before installing (fetches directly from public registries) |
@@ -111,7 +111,7 @@ heckler --vet PACKAGE [--registry npm|pypi]
 
 Exit codes: `0` clean, `1` findings detected (with `--ci`), `2` error.
 
-Scanning nothing is an error, not a clean result. A path that does not exist exits with 2, as does a missing `--config` file. With `--ci`, so does anything heckler was asked to scan and could not: a file that is unreadable or larger than 50 MB, a directory it cannot list, and, with `--diff-only`, a changed package that is not installed or is installed at another version, a lockfile heckler has no parser for, and a requirements line it cannot read. Each one is named in a warning on stderr. `--allow-unscanned` keeps the warnings and drops the exit code. `--vet` exits with 1 on findings and with 2 when part of the package could not be scanned, with or without `--ci`.
+Scanning nothing is an error, not a clean result. A path that does not exist exits with 2, as do a missing `--config` file and `--diff-only` given no lockfile. With `--ci`, so does anything heckler was asked to scan and could not: a file that is unreadable or larger than 50 MB, a directory it cannot list, and, with `--diff-only`, a changed package that is not installed or is installed at another version, a lockfile heckler has no parser for, and a requirements line it cannot read. Each one is named in a warning on stderr. `--allow-unscanned` keeps the warnings and drops the exit code. `--vet` exits with 1 on findings and with 2 when part of the package could not be scanned, with or without `--ci`.
 
 ## Library API
 
@@ -129,6 +129,8 @@ findings = scanner.scan_path(Path("project/"))
 
 scanner.skipped     # [(path, reason), ...] for files that could not be scanned
 scanner.suppressed  # {path: count} of findings hidden by heckler-ignore comments
+scanner.skipped_dirs  # directories that were not entered because of their name
+scanner.binary      # files an --all-text scan left out as binary
 ```
 
 ## Configuration
@@ -155,7 +157,7 @@ Also reads `[tool.heckler]` from `pyproject.toml`, with the same keys. Python 3.
 
 Allowlist patterns are globs matched against the file path. `*` and `?` stay within one path segment, `**` spans any number of directories, a pattern without a leading `/` matches at any depth, and a trailing `/` covers everything under that directory. The allowlist also applies to files passed by name, which is how pre-commit runs heckler.
 
-Emoji contain two of the characters heckler looks for: a presentation selector (U+FE0E or U+FE0F) after the character it styles, and a zero width joiner (U+200D) between two emoji. With `allow_emoji: true`, the default, those are reported at INFO, which is below the default threshold, so an emoji in a README or a string literal does not fail the scan. Use `--severity info` to list them. A selector anywhere else, or next to another variation selector, is still CRITICAL, so a run of them hidden behind an emoji is reported in full. The flags of England, Scotland and Wales are the only emoji built from tag characters (U+1F3F4, five tags, U+E007F); exactly those three sequences are reported at INFO, and every other run of tags stays HIGH. A line with more than 10 presentation selectors inside emoji is reported once, at LOW: each is harmless alone, but the choice of selector across a long row can carry data. Set `allow_emoji: false` to flag every occurrence.
+Emoji contain two of the characters heckler looks for: a presentation selector (U+FE0E or U+FE0F) after the character it styles, and a zero width joiner (U+200D) between two emoji. With `allow_emoji: true`, the default, those are reported at INFO, which is below the default threshold, so an emoji in a README or a string literal does not fail the scan. Use `--severity info` to list them. A selector anywhere else, or next to another variation selector, is still CRITICAL, so a run of them hidden behind an emoji is reported in full. The flags of England, Scotland and Wales are the only emoji built from tag characters (U+1F3F4, five tags, U+E007F); exactly those three sequences are reported at INFO, and every other run of tags stays HIGH. A line with more than 10 presentation selectors inside emoji is reported once, at LOW: each is harmless alone, but the choice of selector across a long row can carry data. Wrapping the row does not avoid that: a file in which more than 10 emoji are written in a presentation other than the one that emoji mostly has there (bare, U+FE0E or U+FE0F) is reported once, at LOW, and so is a file with more than 50 zero width joiners between emoji. Set `allow_emoji: false` to flag every occurrence.
 
 Suppress the next line with a dedicated directive (preferred):
 
@@ -220,12 +222,17 @@ Source scanning is **language-agnostic** — the regex-based detector works on a
 
 Well-known files without an extension are also scanned: `Makefile`, `Dockerfile`, `Jenkinsfile`, `Gemfile`, `Rakefile`, `Vagrantfile`, `Procfile`, `Justfile`, `BUILD`, `Podfile`, `.gitignore`, `.dockerignore`, `.env`, `.cursorrules`, `.windsurfrules`, `.clinerules`, and more, along with their dotted variants `Dockerfile.*` and `.env.*` (`Dockerfile.dev`, `.env.example`).
 
-Use `--all-text` to scan every text file regardless of extension. That applies inside dependency directories too, where heckler otherwise keeps to a shorter list of source extensions.
+A file that starts with `#!` is scanned as well, whatever it is called.
+
+Use `--all-text` to scan every text file regardless of extension. That applies inside dependency directories too, where heckler otherwise keeps to a shorter list: source extensions, `package.json`, and anything that starts with `#!`. With `--all-text` the content decides what is left out: a file with an unrecognised name is taken for binary when more than one byte in 32 of its first 8 KB is a control byte. A NUL or two does not do that, and a file with a recognised name or a `#!` first line is always scanned. The run says how many files it left out as binary, and `--vet` names them.
+
+Some directories are not entered in a directory walk. Dependency and generated directories (`node_modules`, `vendor`, `site-packages`, `.venv`, `venv`, `.tox`, `.eggs`, `target`, `.next`, `.nuxt`, `coverage`) are scanned with `--scan-deps`, and a run that skipped one names it in a note on stderr. Version control data and tool caches (`.git`, `__pycache__`, `.mypy_cache`, `.ruff_cache`) are never scanned. `dist/` and `build/` are scanned like any other directory, because projects commit them; list them under `extra_skip_dirs` to leave them out.
 
 Files encoded as UTF-16 or UTF-32 (with BOM) are detected and decoded. A file is read a second way when its bytes disagree with what it announces:
 
-- A UTF-16 or UTF-32 BOM in front of content that is not in that encoding is reported at HIGH, and the file is scanned as UTF-8 as well. Otherwise two bytes in front of an ordinary file would be enough to hide everything in it.
-- A file without a BOM that has a NUL in every other byte is also scanned as UTF-16, so the character is named and not only the NUL bytes around it.
+- A UTF-16 or UTF-32 BOM in front of content that is not in that encoding is reported at HIGH, and the file is scanned as UTF-8 as well. Otherwise two bytes in front of an ordinary file would be enough to hide everything in it. A stray NUL does not make UTF-8 text count as UTF-16.
+- A file whose content does match its BOM is read as UTF-8 too, and code points from U+00A0 up are reported from that reading. Padding that makes the BOM believable therefore cannot hide UTF-8 text behind it.
+- A file without a BOM that has a NUL in every other byte is also scanned as UTF-16, so the character is named and not only the NUL bytes around it. The same goes for UTF-16 in a script whose upper byte is a control character (Greek, Cyrillic, Hebrew, Arabic, Thai and others), and for UTF-32.
 
 Findings from such a file say which reading they come from, for example `Right-to-Left Override (read as UTF-8)`. A line ends at LF, CRLF or a lone CR, so line numbers match what an editor shows.
 
@@ -235,11 +242,11 @@ Findings from such a file say which reading they come from, for example `Right-t
 |---|---|
 | `--vet` (pre-install scan) | npm, PyPI |
 | `--diff-only` (lockfile parsing) | npm (lockfile v1 to v3), yarn (classic and berry), pnpm (lockfile v5 to v9), pip (`requirements*.txt`), pipenv, poetry |
-| `--scan-deps` (installed deps) | node\_modules, vendor, site-packages, target (Cargo) |
+| `--scan-deps` (installed deps) | node\_modules, vendor, site-packages and virtualenvs (`.venv`, `venv`, `.tox`, `.eggs`), target (Cargo) |
 
 Lockfiles for Cargo, Go, Ruby, and Composer are detected but parsers are not yet implemented. Handed one of these, or a file it does not recognise, `--diff-only` warns and, with `--ci`, fails with exit code 2, because the packages behind it were not scanned. The same goes for a `package-lock.json` with a `lockfileVersion` newer than 3.
 
-In a requirements file, an exact pin (`name==1.2.3`) is checked against the installed version. A bare name, a range (`>=`, `<`, `~=`, ...) or `name @ url` has no version to check, so whatever is installed under that name is scanned. A line that starts like a package name but cannot be read as a requirement, such as a bare URL, counts as unscanned.
+In a requirements file, an exact pin (`name==1.2.3`) is checked against the installed version. A bare name, a range (`>=`, `<`, `~=`, ...) or `name @ url` has no version to check, so whatever is installed under that name is scanned. A URL or a path is read for the package it names: an `#egg=` fragment gives the name (`-e git+https://host/repo.git#egg=name`), and the file name of a wheel or source archive gives the name and the version (`./wheels/name-1.0-py3-none-any.whl`). A directory inside the project, such as `-e .`, is the project's own code and is left to the source scan. A URL or path that names no package, and a line that cannot be read as a requirement, count as unscanned.
 
 `--diff-only` scans the installed copy of each package that was added or bumped in the lockfile, so the dependencies have to be installed first. Node packages are looked up in `node_modules`, including pnpm's virtual store. Python packages are looked up in a virtualenv next to the lockfile or in the working directory (`.venv`, `venv`, `env`), then in the environment heckler runs in, then in the other interpreters on `PATH`, which is where an activated virtualenv is found when heckler runs under pre-commit. When the lockfile names a version, the installed copy has to be that version. With `--ci`, a changed package that is missing or installed at another version fails the run with exit code 2 and is named in the output; `--allow-unscanned` turns that back into a warning.
 

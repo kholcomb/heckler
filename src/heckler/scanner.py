@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .characters import (
+    _KEYCAP_BASES,
+    _ZERO_WIDTH_JOINER,
     DANGEROUS_UNICODE_RE,
     PRESENTATION_SELECTORS,
     CharInfo,
@@ -262,6 +264,15 @@ _LINE_BREAK_RE = re.compile(r"\r\n|\r|\n")
 # them.
 _MAX_EMOJI_SELECTORS_PER_LINE = 10
 
+# Wrapping a row gets it under the limit for a line, so two counts are kept
+# for the whole file. An emoji can be written bare, with U+FE0E or with
+# U+FE0F; whichever a file mostly uses for an emoji is its presentation
+# there, and more occurrences than this in another one are reported once, at
+# LOW. A joiner between two emoji is there or it is not, which is a choice
+# too, so more joiners than the second limit are reported the same way.
+_MAX_VARIED_EMOJI_PER_FILE = 10
+_MAX_EMOJI_JOINERS_PER_FILE = 50
+
 
 _BINARY_CHECK_SIZE = 8192
 
@@ -359,23 +370,51 @@ def _bom_matches_content(raw: bytes, codec: str) -> bool:
     return True
 
 
-def _guess_bomless_utf16(head: bytes) -> str | None:
+# The upper byte of a UTF-16 unit for the scripts below U+2000 (Latin, Greek,
+# Cyrillic, Hebrew, Arabic, Thai and more), without the three values that
+# are tab, LF and CR in a UTF-8 file.
+_UTF16_HIGH_BYTES = bytes(b for b in range(0x20) if b not in b"\t\n\r")
+
+
+def _guess_bomless_utf16(head: bytes, high_bytes: bytes = b"\x00") -> str | None:
     """Return a UTF-16 codec if *head* looks like UTF-16 text without a BOM.
 
     ASCII in UTF-16 has a NUL in every other byte: the second of each pair
     in little-endian order, the first in big-endian. A quarter of the pairs
     is enough to call it, provided the other byte of a pair is almost never
     NUL. A stray NUL or two in a UTF-8 file is far below that.
+
+    *high_bytes* is what counts as the upper byte of a pair. NUL alone
+    finds Latin text; ``_UTF16_HIGH_BYTES`` finds the other scripts whose
+    upper byte is a control character.
     """
     pairs = len(head) // 2
     if pairs < 2:
         return None
-    first = head[0 : pairs * 2 : 2].count(0)
-    second = head[1 : pairs * 2 : 2].count(0)
-    if second * 4 >= pairs and first * 8 <= second:
+    first, second = head[0 : pairs * 2 : 2], head[1 : pairs * 2 : 2]
+    high_first = len(first) - len(first.translate(None, high_bytes))
+    high_second = len(second) - len(second.translate(None, high_bytes))
+    if high_second * 4 >= pairs and first.count(0) * 8 <= high_second:
         return "utf-16-le"
-    if first * 4 >= pairs and second * 8 <= first:
+    if high_first * 4 >= pairs and second.count(0) * 8 <= high_first:
         return "utf-16-be"
+    return None
+
+
+def _guess_bomless_utf32(head: bytes) -> str | None:
+    """Return a UTF-32 codec if *head* looks like UTF-32 text without a BOM.
+
+    A code point takes four bytes and the upper two are NUL for everything
+    in the Basic Multilingual Plane, while the lowest is almost never NUL.
+    """
+    units = len(head) // 4
+    if units < 2:
+        return None
+    nul = [head[offset : units * 4 : 4].count(0) for offset in range(4)]
+    if nul[2] * 4 >= units * 3 and nul[3] * 4 >= units * 3 and nul[0] * 8 <= units:
+        return "utf-32-le"
+    if nul[0] * 4 >= units * 3 and nul[1] * 4 >= units * 3 and nul[3] * 8 <= units:
+        return "utf-32-be"
     return None
 
 
@@ -386,7 +425,8 @@ def _other_readings(raw: bytes, bom_codec: str | None, believed: bool) -> list[t
     *believed* says whether the content matches *bom_codec*.
     """
     if bom_codec is None:
-        guess = _guess_bomless_utf16(raw[:_BINARY_CHECK_SIZE])
+        head = raw[:_BINARY_CHECK_SIZE]
+        guess = _guess_bomless_utf32(head) or _guess_bomless_utf16(head, _UTF16_HIGH_BYTES)
         return [(guess, 0)] if guess else []
     if believed:
         return [("utf-8", _BELIEVED_BOM_FLOOR)]
@@ -394,6 +434,21 @@ def _other_readings(raw: bytes, bom_codec: str | None, believed: bool) -> list[t
         # FF FE 00 00 is also the UTF-16 BOM followed by a NUL character.
         return [("utf-8", 0), ("utf-16-le", 0)]
     return [("utf-8", 0)]
+
+
+def _varied_presentations(text: str, styled: dict[tuple[str, int], int]) -> int:
+    """How many emoji in *text* are not in the presentation that emoji mostly has there.
+
+    *styled* says how often each emoji is followed by each presentation
+    selector. The third way to write it, bare, is counted here.
+    """
+    selectors = "".join(chr(cp) for cp in sorted(PRESENTATION_SELECTORS))
+    varied = 0
+    for base in {base for base, _ in styled}:
+        forms = [count for (styled_base, _), count in styled.items() if styled_base == base]
+        forms.append(len(re.findall(re.escape(base) + f"(?![{selectors}])", text)))
+        varied += sum(forms) - max(forms)
+    return varied
 
 
 def _label_reading(findings: list[Finding], codec: str) -> None:
@@ -464,6 +519,12 @@ class Scanner:
         next_bare, next_listed = False, _NOTHING
         line_num, line = 0, ""
 
+        # Counts over the whole file, and where the first of each kind is.
+        styled: dict[tuple[str, int], int] = {}
+        first_styled: tuple[int, int, str] | None = None
+        joiners = 0
+        first_joiner: tuple[int, int, str] | None = None
+
         def report(col: int, cp: int, info: CharInfo) -> None:
             if not info.severity >= self.severity_threshold:
                 return
@@ -525,6 +586,13 @@ class Scanner:
                         if not emoji_selectors:
                             first_emoji_selector = match.start()
                         emoji_selectors += 1
+                        base = line[match.start() - 1]
+                        if base not in _KEYCAP_BASES:  # or every digit would count as bare
+                            styled[(base, cp)] = styled.get((base, cp), 0) + 1
+                            first_styled = first_styled or (line_num, match.start(), line)
+                    elif cp == _ZERO_WIDTH_JOINER:
+                        joiners += 1
+                        first_joiner = first_joiner or (line_num, match.start(), line)
                 report(match.start(), cp, info)
                 if len(findings) >= _MAX_FINDINGS_PER_FILE:
                     return self._stopped_early(findings, filename)
@@ -541,6 +609,34 @@ class Scanner:
                 )
                 if len(findings) >= _MAX_FINDINGS_PER_FILE:
                     return self._stopped_early(findings, filename)
+
+        # A count over the file belongs to no line, so no line's directive
+        # covers it. It is reported where the first of its kind is.
+        bare, listed = False, _NOTHING
+        if first_styled and sum(styled.values()) > _MAX_VARIED_EMOJI_PER_FILE:
+            varied = _varied_presentations(text, styled)
+            if varied > _MAX_VARIED_EMOJI_PER_FILE:
+                line_num, column, line = first_styled
+                report(
+                    column,
+                    ord(line[column]),
+                    CharInfo(
+                        f"{varied} emoji written with more than one presentation in this file",
+                        ThreatCategory.VARIATION_SELECTOR,
+                        Severity.LOW,
+                    ),
+                )
+        if first_joiner and joiners > _MAX_EMOJI_JOINERS_PER_FILE:
+            line_num, column, line = first_joiner
+            report(
+                column,
+                _ZERO_WIDTH_JOINER,
+                CharInfo(
+                    f"{joiners} zero width joiners between emoji in this file",
+                    ThreatCategory.ZERO_WIDTH,
+                    Severity.LOW,
+                ),
+            )
         return findings
 
     @staticmethod

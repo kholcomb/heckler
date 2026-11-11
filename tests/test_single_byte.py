@@ -136,6 +136,43 @@ class TestRealUtf16IsStillBelieved:
         assert _names(f) == []
 
 
+class TestEncodingsWithoutAByteOrderMark:
+    """The character is named, not only the NUL or control bytes around it."""
+
+    @pytest.mark.parametrize("script", ["greek", "cyrillic", "hebrew", "arabic", "thai"])
+    @pytest.mark.parametrize(("codec", "label"), [("utf-16-le", "LE"), ("utf-16-be", "BE")])
+    def test_utf16_with_no_ascii_in_it(
+        self, tmp_path: Path, script: str, codec: str, label: str
+    ) -> None:
+        word = SCRIPTS[script]
+        text = f"{word}{word}\n" * 6 + f"{word}{RLO}{word}\n"
+        f = tmp_path / "notes.txt"
+        f.write_bytes(text.encode(codec))
+        assert f"Right-to-Left Override (read as UTF-16 {label})" in _names(f)
+
+    @pytest.mark.parametrize(("codec", "label"), [("utf-32-le", "LE"), ("utf-32-be", "BE")])
+    def test_utf32(self, tmp_path: Path, codec: str, label: str) -> None:
+        f = tmp_path / "evil.js"
+        f.write_bytes(SAMPLE.encode(codec))
+        assert f"Right-to-Left Override (read as UTF-32 {label})" in _names(f)
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            b"x\n" * 200,
+            b"\tab\r\n" * 200,
+            b"\x00" * 64 + b"const p = 1;\n" * 4,
+            b"\x1b[32mok\x1b[0m step\n" * 50,
+            bytes(range(256)) * 8,
+        ],
+        ids=["short lines", "tabs and CRLF", "NUL block", "escape codes", "every byte"],
+    )
+    def test_other_content_is_read_once(self, tmp_path: Path, content: bytes) -> None:
+        f = tmp_path / "data.js"
+        f.write_bytes(content)
+        assert not [name for name in _names(f) if "read as" in name]
+
+
 class TestNulInAFileWithoutAnExtensionList:
     """With no extension list, content decides what is left out. One byte does not."""
 

@@ -902,9 +902,6 @@ class TestRequirementsWithoutAPin:
     @pytest.mark.parametrize(
         "line",
         [
-            "https://example.test/pkg-1.0.tar.gz",
-            "git+https://example.test/org/pkg.git@v1.0",
-            "file:///srv/wheels/pkg-1.0-py3-none-any.whl",
             "pkg-1.0-py3-none-any.whl extra",
             "requests==",
             "requests=2.32.0",
@@ -916,6 +913,50 @@ class TestRequirementsWithoutAPin:
         packages, problems = self._added(line)
         assert packages == []
         assert problems == [f'the added line "{line}" could not be read as a requirement']
+
+    @pytest.mark.parametrize(
+        ("line", "package"),
+        [
+            ("-e git+https://example.test/org/pkg.git#egg=Pkg", ("pkg", "")),
+            ("--editable git+https://example.test/org/pkg.git@v1.0#egg=pkg", ("pkg", "")),
+            ("-e git+https://example.test/org/mono.git#egg=pkg&subdirectory=src/pkg", ("pkg", "")),
+            ("git+https://example.test/org/pkg.git#egg=pkg[extra]", ("pkg", "")),
+            ("./wheels/pkg-1.0-py3-none-any.whl", ("pkg", "1.0")),
+            ("wheels/My_Pkg-2.1.0-1-cp312-cp312-linux_x86_64.whl", ("my_pkg", "2.1.0")),
+            ("file:///srv/wheels/pkg-1.0-py3-none-any.whl", ("pkg", "1.0")),
+            ("https://example.test/pkg-1.0.tar.gz", ("pkg", "1.0")),
+            ("https://example.test/dl/some-pkg-0.9.zip#sha256=abcd", ("some-pkg", "0.9")),
+            ("./wheels/pkg-1.0-py3-none-any.whl --hash=sha256:aaaa", ("pkg", "1.0")),
+            ('./wheels/pkg-1.0-py3-none-any.whl ; python_version >= "3.9"', ("pkg", "1.0")),
+        ],
+    )
+    def test_url_or_path_that_names_its_package(self, line: str, package: tuple[str, str]) -> None:
+        assert self._added(line) == ([package], [])
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "git+https://example.test/org/pkg.git@v1.0",
+            "-e git+https://example.test/org/pkg.git",
+            "https://example.test/download",
+            "-e ../shared/pkg",
+            "./tools/../../outside",
+            "/srv/src/pkg",
+            "~/src/pkg",
+            "./wheels/not-a-wheel-name.whl",
+            "-e git+https://example.test/org/pkg.git#egg=pkg and more",
+        ],
+    )
+    def test_url_or_path_that_names_no_package_is_a_problem(self, line: str) -> None:
+        packages, problems = self._added(line)
+        assert packages == []
+        assert problems == [f'the added line "{line}" does not say which package it installs']
+
+    @pytest.mark.parametrize(
+        "line", ["-e .", "--editable=.", ".", "./vendor/local-package", "-e ./a"]
+    )
+    def test_directory_inside_the_project_is_left_to_the_source_scan(self, line: str) -> None:
+        assert self._added(line) == ([], [])
 
     def test_lines_that_are_not_packages_are_not_problems(self) -> None:
         assert self._added(
