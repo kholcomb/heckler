@@ -21,60 +21,65 @@ if TYPE_CHECKING:
 # diff and attribute each added line to the package block it sits in. With the
 # default three lines, a version bump shows only the changed "version" and
 # "resolved" lines and the package name may not appear in the diff at all.
-_FULL_CONTEXT = '--unified=1000000'
+_FULL_CONTEXT = "--unified=1000000"
 
 
 def detect_ecosystem(lockfile_path: str) -> str:
     """Determine ecosystem from lockfile name."""
     name = Path(lockfile_path).name.lower()
     mapping = {
-        'package-lock.json': 'npm',
-        'yarn.lock': 'yarn',
-        'pnpm-lock.yaml': 'pnpm',
-        'requirements.txt': 'pip',
-        'poetry.lock': 'poetry',
-        'pipfile.lock': 'pip',
-        'cargo.lock': 'cargo',
-        'go.sum': 'go',
-        'gemfile.lock': 'ruby',
-        'composer.lock': 'composer',
+        "package-lock.json": "npm",
+        "yarn.lock": "yarn",
+        "pnpm-lock.yaml": "pnpm",
+        "requirements.txt": "pip",
+        "poetry.lock": "poetry",
+        "pipfile.lock": "pip",
+        "cargo.lock": "cargo",
+        "go.sum": "go",
+        "gemfile.lock": "ruby",
+        "composer.lock": "composer",
     }
-    return mapping.get(name, 'unknown')
+    return mapping.get(name, "unknown")
 
 
 def get_lockfile_diff(lockfile_path: str) -> str:
     """Get the staged diff for a lockfile."""
     try:
         result = subprocess.run(
-            ['git', 'diff', '--cached', _FULL_CONTEXT, '--', lockfile_path],
-            capture_output=True, text=True, timeout=30,
+            ["git", "diff", "--cached", _FULL_CONTEXT, "--", lockfile_path],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if result.returncode == 0 and result.stdout:
             return result.stdout
         # Fall back to unstaged diff
         result = subprocess.run(
-            ['git', 'diff', _FULL_CONTEXT, '--', lockfile_path],
-            capture_output=True, text=True, timeout=30,
+            ["git", "diff", _FULL_CONTEXT, "--", lockfile_path],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
-        return result.stdout if result.returncode == 0 else ''
+        return result.stdout if result.returncode == 0 else ""
     except (subprocess.TimeoutExpired, FileNotFoundError):
-        return ''
+        return ""
 
 
 def parse_changed_packages(diff_text: str, ecosystem: str) -> list[tuple[str, str]]:
     """Parse a lockfile diff to extract (name, version) tuples for added/changed packages."""
-    if ecosystem == 'npm':
+    if ecosystem == "npm":
         return _parse_npm_lockfile_diff(diff_text)
-    elif ecosystem == 'pip':
+    elif ecosystem == "pip":
         return _parse_pip_diff(diff_text)
-    elif ecosystem == 'poetry':
+    elif ecosystem == "poetry":
         return _parse_poetry_diff(diff_text)
-    elif ecosystem == 'yarn':
+    elif ecosystem == "yarn":
         return _parse_yarn_diff(diff_text)
-    elif ecosystem == 'pnpm':
+    elif ecosystem == "pnpm":
         return _parse_pnpm_diff(diff_text)
-    elif ecosystem in ('cargo', 'go', 'ruby', 'composer'):
+    elif ecosystem in ("cargo", "go", "ruby", "composer"):
         import sys as _sys
+
         print(
             f"Warning: {ecosystem} lockfile parsing is not yet supported. "
             f"Changed packages will not be scanned with --diff-only.",
@@ -92,11 +97,11 @@ def _new_side(diff_text: str) -> Iterator[tuple[bool, str]]:
     or unchanged.
     """
     for line in diff_text.splitlines():
-        if line.startswith('+++'):
+        if line.startswith("+++"):
             continue
-        if line.startswith('+'):
+        if line.startswith("+"):
             yield True, line[1:]
-        elif line.startswith(' '):
+        elif line.startswith(" "):
             yield False, line[1:]
 
 
@@ -128,7 +133,7 @@ def _parse_npm_lockfile_diff(diff_text: str) -> list[tuple[str, str]]:
             # the end of "packages": no longer inside a package block.
             current = None
         if added and current is not None:
-            packages.append((current, ''))
+            packages.append((current, ""))
     return list(dict.fromkeys(packages))
 
 
@@ -136,20 +141,20 @@ def _parse_pip_diff(diff_text: str) -> list[tuple[str, str]]:
     """Parse a requirements.txt diff for added packages."""
     packages: list[tuple[str, str]] = []
     for line in diff_text.splitlines():
-        if not line.startswith('+') or line.startswith('+++'):
+        if not line.startswith("+") or line.startswith("+++"):
             continue
         content = line[1:].strip()
-        if not content or content.startswith('#'):
+        if not content or content.startswith("#"):
             continue
         # requirements.txt: package==version
-        if '==' in content:
-            name, _, version = content.partition('==')
-            name = name.split('[')[0].strip().lower()
+        if "==" in content:
+            name, _, version = content.partition("==")
+            name = name.split("[")[0].strip().lower()
             packages.append((name, version.strip()))
-        elif '>=' in content or '<=' in content or '!=' in content or '~=' in content:
-            name = content.split('>')[0].split('<')[0].split('!')[0].split('~')[0]
-            name = name.split('[')[0].strip().lower()
-            packages.append((name, ''))
+        elif ">=" in content or "<=" in content or "!=" in content or "~=" in content:
+            name = content.split(">")[0].split("<")[0].split("!")[0].split("~")[0]
+            name = name.split("[")[0].strip().lower()
+            packages.append((name, ""))
     return list(dict.fromkeys(packages))
 
 
@@ -170,18 +175,18 @@ def _parse_poetry_diff(diff_text: str) -> list[tuple[str, str]]:
         stripped = text.strip()
         if not stripped:
             continue
-        if stripped == '[[package]]':
+        if stripped == "[[package]]":
             current, in_header = None, True
-        elif stripped.startswith('['):
+        elif stripped.startswith("["):
             in_header = False
-            if not stripped.startswith('[package.'):
+            if not stripped.startswith("[package."):
                 current = None  # [metadata], [extras], ...
         elif in_header and current is None:
             m = _POETRY_NAME_RE.match(stripped)
             if m:
                 current = m.group(1).lower()
         if added and current is not None:
-            packages.append((current, ''))
+            packages.append((current, ""))
     return list(dict.fromkeys(packages))
 
 
@@ -192,15 +197,15 @@ def _yarn_entry_name(header: str) -> str | None:
     (``"lodash@npm:^4.17.21":``) headers.
     """
     header = header.strip()
-    if not header.endswith(':') or '@' not in header:
+    if not header.endswith(":") or "@" not in header:
         return None
-    spec = header[:-1].split(',')[0].strip().strip('"').strip("'")
-    if '@workspace:' in spec:
+    spec = header[:-1].split(",")[0].strip().strip('"').strip("'")
+    if "@workspace:" in spec:
         return None  # the project's own packages, not installed dependencies
-    if spec.startswith('@'):
+    if spec.startswith("@"):
         # Scoped: @scope/name@range
-        return '@' + spec[1:].split('@', 1)[0]
-    return spec.split('@', 1)[0]
+        return "@" + spec[1:].split("@", 1)[0]
+    return spec.split("@", 1)[0]
 
 
 def _parse_yarn_diff(diff_text: str) -> list[tuple[str, str]]:
@@ -217,7 +222,7 @@ def _parse_yarn_diff(diff_text: str) -> list[tuple[str, str]]:
         if not text[0].isspace():
             current = _yarn_entry_name(text)
         if added and current:
-            packages.append((current, ''))
+            packages.append((current, ""))
     return list(dict.fromkeys(packages))
 
 
@@ -225,28 +230,28 @@ def _parse_pnpm_diff(diff_text: str) -> list[tuple[str, str]]:
     """Parse pnpm-lock.yaml diff for added packages."""
     packages: list[tuple[str, str]] = []
     for line in diff_text.splitlines():
-        if not line.startswith('+') or line.startswith('+++'):
+        if not line.startswith("+") or line.startswith("+++"):
             continue
         content = line[1:].strip()
         # pnpm format: /@scope/name@version: or /name@version: or /name:
-        if not content.startswith('/'):
+        if not content.startswith("/"):
             continue
-        entry = content.lstrip('/').rstrip(':').strip()
+        entry = content.lstrip("/").rstrip(":").strip()
         if not entry:
             continue
-        if entry.startswith('@'):
+        if entry.startswith("@"):
             # Scoped: @scope/name@version or @scope/name
             rest = entry[1:]
-            after_slash = rest.split('/', 1)[-1] if '/' in rest else rest
-            name = '@' + rest.rsplit('@', 1)[0] if '@' in after_slash else entry
-        elif '@' in entry:
+            after_slash = rest.split("/", 1)[-1] if "/" in rest else rest
+            name = "@" + rest.rsplit("@", 1)[0] if "@" in after_slash else entry
+        elif "@" in entry:
             # Unscoped with version: name@version
-            name = entry.rsplit('@', 1)[0]
+            name = entry.rsplit("@", 1)[0]
         else:
             # Unscoped without version: name
             name = entry
         if name:
-            packages.append((name, ''))
+            packages.append((name, ""))
     return list(dict.fromkeys(packages))
 
 
@@ -258,15 +263,15 @@ def resolve_package_dir(
     """Map a package name to its install directory."""
     lockfile_dir = Path(lockfile_path).parent
 
-    if ecosystem in ('npm', 'yarn', 'pnpm'):
+    if ecosystem in ("npm", "yarn", "pnpm"):
         # Check local node_modules, then walk up for hoisted
-        candidate = lockfile_dir / 'node_modules' / pkg_name
+        candidate = lockfile_dir / "node_modules" / pkg_name
         if candidate.is_dir():
             return candidate
         # Walk up for yarn/npm workspaces
         current = lockfile_dir.parent
         for _ in range(5):
-            candidate = current / 'node_modules' / pkg_name
+            candidate = current / "node_modules" / pkg_name
             if candidate.is_dir():
                 return candidate
             if current.parent == current:
@@ -274,12 +279,14 @@ def resolve_package_dir(
             current = current.parent
         return None
 
-    elif ecosystem in ('pip', 'poetry'):
+    elif ecosystem in ("pip", "poetry"):
         # Try to find site-packages
         try:
             result = subprocess.run(
-                [sys.executable, '-c', 'import site; print("\\n".join(site.getsitepackages()))'],
-                capture_output=True, text=True, timeout=10,
+                [sys.executable, "-c", 'import site; print("\\n".join(site.getsitepackages()))'],
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if result.returncode == 0:
                 for sp in result.stdout.strip().splitlines():
@@ -287,7 +294,7 @@ def resolve_package_dir(
                     if candidate.is_dir():
                         return candidate
                     # Try with underscores (pip normalizes hyphens)
-                    candidate = Path(sp) / pkg_name.replace('-', '_')
+                    candidate = Path(sp) / pkg_name.replace("-", "_")
                     if candidate.is_dir():
                         return candidate
         except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -303,7 +310,7 @@ def scan_changed_deps(lockfile_paths: list[str], scanner: Scanner) -> list[Findi
 
     for lf_path in lockfile_paths:
         ecosystem = detect_ecosystem(lf_path)
-        if ecosystem == 'unknown':
+        if ecosystem == "unknown":
             print(f"Warning: Unknown lockfile format: {lf_path}", file=sys.stderr)
             continue
 

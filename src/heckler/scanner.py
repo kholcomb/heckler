@@ -59,6 +59,8 @@ class Finding:
         )
 
 
+# Hand-aligned data tables: keep the formatter out.
+# fmt: off
 DEFAULT_TEXT_EXTENSIONS = frozenset({
     # Core web / scripting
     '.js', '.cjs', '.mjs', '.ts', '.jsx', '.tsx', '.py', '.pyi', '.rb', '.go',
@@ -162,6 +164,7 @@ DEP_SCAN_EXTENSIONS = frozenset({
     '.cr',                                            # Crystal
     '.m', '.mm',                                      # Objective-C
 })
+# fmt: on
 
 IGNORE_COMMENT = "heckler-ignore"
 
@@ -172,21 +175,21 @@ IGNORE_COMMENT = "heckler-ignore"
 # The codepoints listed are the ONLY ones suppressed on the next line.
 # If no codepoints are listed, all findings on the next line are suppressed.
 _IGNORE_NEXT_LINE_RE = re.compile(
-    r'^\s*(?://|#|/\*|--|;)\s*heckler-ignore-next-line'
-    r'(?:\s+((?:U\+[0-9A-Fa-f]{4,6}\s*)+))?'
-    r'\s*(?:\*/\s*)?$'
+    r"^\s*(?://|#|/\*|--|;)\s*heckler-ignore-next-line"
+    r"(?:\s+((?:U\+[0-9A-Fa-f]{4,6}\s*)+))?"
+    r"\s*(?:\*/\s*)?$"
 )
 
 # Legacy inline directive (end-of-line anchor prevents mid-string injection).
 # Deprecated in favor of heckler-ignore-next-line but still supported for
 # project code. Never honored in dependency code.
 _IGNORE_INLINE_RE = re.compile(
-    r'(?://|#|/\*|--|;)\s*heckler-ignore'
-    r'(?:\s+((?:U\+[0-9A-Fa-f]{4,6}\s*)+))?'
-    r'\s*(?:\*/\s*)?$'
+    r"(?://|#|/\*|--|;)\s*heckler-ignore"
+    r"(?:\s+((?:U\+[0-9A-Fa-f]{4,6}\s*)+))?"
+    r"\s*(?:\*/\s*)?$"
 )
 
-_CODEPOINT_RE = re.compile(r'U\+([0-9A-Fa-f]{4,6})')
+_CODEPOINT_RE = re.compile(r"U\+([0-9A-Fa-f]{4,6})")
 
 
 def _parse_suppressed_codepoints(directive_match: re.Match[str]) -> frozenset[int] | None:
@@ -199,6 +202,7 @@ def _parse_suppressed_codepoints(directive_match: re.Match[str]) -> frozenset[in
         return None  # no codepoints listed → suppress all
     return frozenset(int(m.group(1), 16) for m in _CODEPOINT_RE.finditer(cp_str))
 
+
 _BINARY_CHECK_SIZE = 8192
 
 # Maximum file size to scan (50 MB). Files larger than this are skipped to
@@ -207,17 +211,17 @@ _MAX_SCAN_FILE_SIZE = 50 * 1024 * 1024
 
 # BOM signatures ordered longest-first so UTF-32 is checked before UTF-16.
 _BOM_TABLE: list[tuple[bytes, str]] = [
-    (b'\xff\xfe\x00\x00', 'utf-32-le'),
-    (b'\x00\x00\xfe\xff', 'utf-32-be'),
-    (b'\xff\xfe',         'utf-16-le'),
-    (b'\xfe\xff',         'utf-16-be'),
+    (b"\xff\xfe\x00\x00", "utf-32-le"),
+    (b"\x00\x00\xfe\xff", "utf-32-be"),
+    (b"\xff\xfe", "utf-16-le"),
+    (b"\xfe\xff", "utf-16-be"),
 ]
 
 
 def _detect_bom_encoding(raw: bytes) -> str | None:
     """Return the codec name if *raw* starts with a UTF-16/32 BOM."""
     for sig, codec in _BOM_TABLE:
-        if raw[:len(sig)] == sig:
+        if raw[: len(sig)] == sig:
             return codec
     return None
 
@@ -242,7 +246,7 @@ class Scanner:
         # Use split('\n') instead of splitlines() — splitlines() treats
         # U+2028/U+2029 as line terminators, consuming them before the regex
         # can detect them.
-        lines = text.split('\n')
+        lines = text.split("\n")
         # Suppressed codepoints for the next line (from heckler-ignore-next-line).
         # None means "suppress all", a frozenset means "suppress only these".
         _NO_SUPPRESS: frozenset[int] = frozenset()
@@ -281,16 +285,18 @@ class Scanner:
                     # INFO, which is below every default threshold.
                     info = CharInfo(f"{info.name} (in emoji)", info.category, Severity.INFO)
                 if info.severity >= self.severity_threshold:
-                    findings.append(Finding.from_match(
-                        filepath=filename,
-                        line_num=line_num,
-                        col=match.start() + 1,
-                        cp=cp,
-                        info=info,
-                        line_content=line,
-                        source=source,
-                        package=package,
-                    ))
+                    findings.append(
+                        Finding.from_match(
+                            filepath=filename,
+                            line_num=line_num,
+                            col=match.start() + 1,
+                            cp=cp,
+                            info=info,
+                            line_content=line,
+                            source=source,
+                            package=package,
+                        )
+                    )
         return findings
 
     def scan_file(self, filepath: Path) -> list[Finding]:
@@ -310,7 +316,7 @@ class Scanner:
         encoding = _detect_bom_encoding(raw)
         if encoding:
             try:
-                text = raw.decode(encoding, errors='replace')
+                text = raw.decode(encoding, errors="replace")
                 return self.scan_text(text, str(filepath))
             except Exception:
                 return []
@@ -320,7 +326,7 @@ class Scanner:
         # the first line, so stopping there would let a single byte hide
         # everything that follows it. Whether a file is worth scanning at all
         # is decided by the caller, from its name.
-        text = raw.decode('utf-8', errors='replace')
+        text = raw.decode("utf-8", errors="replace")
         return self.scan_text(text, str(filepath))
 
     def scan_path(self, root: Path) -> list[Finding]:
@@ -340,9 +346,9 @@ class Scanner:
         for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
             # Filter directories in-place — skip symlinks and excluded dirs
             dirnames[:] = [
-                d for d in dirnames
-                if d not in effective_skip
-                and not os.path.islink(os.path.join(dirpath, d))
+                d
+                for d in dirnames
+                if d not in effective_skip and not os.path.islink(os.path.join(dirpath, d))
             ]
             dp = Path(dirpath)
             # Use restricted extensions for dependency directories
@@ -377,45 +383,51 @@ class Scanner:
         if self.scan_deps:
             # Remove dependency dirs from skip list when scanning deps
             dep_dirs = {
-                'node_modules', 'vendor', 'site-packages',
-                '.venv', 'venv',
-                'target',  # Rust/Cargo build + deps
-                'build', 'dist',  # Common build output dirs nested in deps
+                "node_modules",
+                "vendor",
+                "site-packages",
+                ".venv",
+                "venv",
+                "target",  # Rust/Cargo build + deps
+                "build",
+                "dist",  # Common build output dirs nested in deps
             }
             return self.skip_dirs - dep_dirs
         return self.skip_dirs
 
     def _extensions_for_path(
-        self, dirpath: Path, default_exts: frozenset[str] | None,
+        self,
+        dirpath: Path,
+        default_exts: frozenset[str] | None,
     ) -> frozenset[str] | None:
         """Use restricted extensions inside dependency directories."""
         parts = set(dirpath.parts)
-        dep_markers = {'node_modules', 'vendor', 'site-packages', 'target'}
+        dep_markers = {"node_modules", "vendor", "site-packages", "target"}
         if parts & dep_markers:
             return DEP_SCAN_EXTENSIONS
         return default_exts
 
     def _classify_path(self, filepath: str) -> tuple[str, str | None]:
         """Determine if a file is project code or a dependency, and extract package name."""
-        parts = filepath.replace('\\', '/').split('/')
-        if 'node_modules' in parts:
-            idx = parts.index('node_modules')
+        parts = filepath.replace("\\", "/").split("/")
+        if "node_modules" in parts:
+            idx = parts.index("node_modules")
             if idx + 1 < len(parts):
                 pkg = parts[idx + 1]
                 # Handle scoped packages: @scope/name
-                if pkg.startswith('@') and idx + 2 < len(parts):
+                if pkg.startswith("@") and idx + 2 < len(parts):
                     pkg = f"{pkg}/{parts[idx + 2]}"
                 return "dependency", pkg
-        if 'site-packages' in parts:
-            idx = parts.index('site-packages')
+        if "site-packages" in parts:
+            idx = parts.index("site-packages")
             if idx + 1 < len(parts):
                 return "dependency", parts[idx + 1]
-        if 'vendor' in parts:
-            idx = parts.index('vendor')
+        if "vendor" in parts:
+            idx = parts.index("vendor")
             if idx + 1 < len(parts):
                 return "dependency", parts[idx + 1]
-        if 'target' in parts:
-            idx = parts.index('target')
+        if "target" in parts:
+            idx = parts.index("target")
             if idx + 1 < len(parts):
                 return "dependency", parts[idx + 1]
         return "project", None
@@ -429,8 +441,7 @@ class Scanner:
     def _is_source_name(filepath: Path) -> bool:
         """True if the name alone marks the file as one heckler scans by default."""
         return (
-            filepath.suffix.lower() in DEFAULT_TEXT_EXTENSIONS
-            or filepath.name in KNOWN_FILENAMES
+            filepath.suffix.lower() in DEFAULT_TEXT_EXTENSIONS or filepath.name in KNOWN_FILENAMES
         )
 
     @staticmethod
@@ -441,11 +452,11 @@ class Scanner:
         as text.
         """
         try:
-            with open(filepath, 'rb') as f:
+            with open(filepath, "rb") as f:
                 chunk = f.read(_BINARY_CHECK_SIZE)
         except (OSError, PermissionError):
             return True
-        return _detect_bom_encoding(chunk) is None and b'\x00' in chunk
+        return _detect_bom_encoding(chunk) is None and b"\x00" in chunk
 
 
 def _glob_match(path: str, pattern: str) -> bool:
@@ -459,28 +470,28 @@ def _glob_match(path: str, pattern: str) -> bool:
     ``PurePath.match`` is not used because it treats ``**`` like ``*``, and
     ``PurePath.full_match`` needs Python 3.13.
     """
-    return _compile_glob(pattern).search(path.replace('\\', '/')) is not None
+    return _compile_glob(pattern).search(path.replace("\\", "/")) is not None
 
 
 @functools.lru_cache(maxsize=256)
 def _compile_glob(pattern: str) -> re.Pattern[str]:
-    pattern = pattern.replace('\\', '/')
-    anchored = pattern.startswith('/')
-    if pattern.endswith('/'):
-        pattern += '**'
-    segments = [seg for seg in pattern.split('/') if seg and seg != '.']
+    pattern = pattern.replace("\\", "/")
+    anchored = pattern.startswith("/")
+    if pattern.endswith("/"):
+        pattern += "**"
+    segments = [seg for seg in pattern.split("/") if seg and seg != "."]
 
     parts: list[str] = []
     for i, seg in enumerate(segments):
         last = i == len(segments) - 1
-        if seg == '**':
-            parts.append('.*' if last else '(?:[^/]+/)*')
+        if seg == "**":
+            parts.append(".*" if last else "(?:[^/]+/)*")
         else:
-            parts.append(_translate_glob_segment(seg) + ('' if last else '/'))
+            parts.append(_translate_glob_segment(seg) + ("" if last else "/"))
 
-    prefix = '^/' if anchored else '(?:^|/)'
-    flags = re.IGNORECASE if os.name == 'nt' else 0
-    return re.compile(prefix + ''.join(parts) + '$', flags)
+    prefix = "^/" if anchored else "(?:^|/)"
+    flags = re.IGNORECASE if os.name == "nt" else 0
+    return re.compile(prefix + "".join(parts) + "$", flags)
 
 
 def _translate_glob_segment(segment: str) -> str:
@@ -490,22 +501,22 @@ def _translate_glob_segment(segment: str) -> str:
     while i < len(segment):
         ch = segment[i]
         i += 1
-        if ch == '*':
-            out.append('[^/]*')
-        elif ch == '?':
-            out.append('[^/]')
-        elif ch == '[':
+        if ch == "*":
+            out.append("[^/]*")
+        elif ch == "?":
+            out.append("[^/]")
+        elif ch == "[":
             # A "]" straight after "[" or "[!" is a literal member of the set.
-            start = i + 1 if segment[i:i + 1] == '!' else i
-            end = segment.find(']', start + 1)
+            start = i + 1 if segment[i : i + 1] == "!" else i
+            end = segment.find("]", start + 1)
             if end == -1:
                 out.append(re.escape(ch))
                 continue
-            negate = segment[i] == '!'
-            members = segment[i + 1 if negate else i:end]
-            members = re.sub(r'([\\^\[&~|])', r'\\\1', members)
+            negate = segment[i] == "!"
+            members = segment[i + 1 if negate else i : end]
+            members = re.sub(r"([\\^\[&~|])", r"\\\1", members)
             out.append(f"(?!/)[{'^' if negate else ''}{members}]")
             i = end + 1
         else:
             out.append(re.escape(ch))
-    return ''.join(out)
+    return "".join(out)

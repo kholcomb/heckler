@@ -28,6 +28,7 @@ from heckler.vet import _safe_zip_extract, extract_package
 # 1. U+2028 / U+2029 detection
 # ---------------------------------------------------------------------------
 
+
 class TestLineParagraphSeparators:
     def test_regex_matches_u2028(self) -> None:
         assert DANGEROUS_UNICODE_RE.search("\u2028")
@@ -64,44 +65,45 @@ class TestLineParagraphSeparators:
 # 2. Suppression directive hardening
 # ---------------------------------------------------------------------------
 
+
 class TestNextLineDirective:
     """Tests for the heckler-ignore-next-line directive."""
 
     def test_next_line_suppresses_all(self) -> None:
         scanner = Scanner()
-        text = '// heckler-ignore-next-line\nconst x = "\uFE01\u202E";\n'
+        text = '// heckler-ignore-next-line\nconst x = "\ufe01\u202e";\n'
         assert scanner.scan_text(text) == []
 
     def test_next_line_python_comment(self) -> None:
         scanner = Scanner()
-        text = '# heckler-ignore-next-line\nx = "\uFE01"\n'
+        text = '# heckler-ignore-next-line\nx = "\ufe01"\n'
         assert scanner.scan_text(text) == []
 
     def test_next_line_sql_comment(self) -> None:
         scanner = Scanner()
-        text = '-- heckler-ignore-next-line\nSELECT "\uFE01";\n'
+        text = '-- heckler-ignore-next-line\nSELECT "\ufe01";\n'
         assert scanner.scan_text(text) == []
 
     def test_next_line_block_comment(self) -> None:
         scanner = Scanner()
-        text = '/* heckler-ignore-next-line */\nconst x = "\uFE01";\n'
+        text = '/* heckler-ignore-next-line */\nconst x = "\ufe01";\n'
         assert scanner.scan_text(text) == []
 
     def test_next_line_semicolon_comment(self) -> None:
         scanner = Scanner()
-        text = '; heckler-ignore-next-line\nkey = "\uFE01"\n'
+        text = '; heckler-ignore-next-line\nkey = "\ufe01"\n'
         assert scanner.scan_text(text) == []
 
     def test_next_line_only_affects_one_line(self) -> None:
         scanner = Scanner()
-        text = '// heckler-ignore-next-line\nconst x = "\uFE01";\nconst y = "\uFE02";\n'
+        text = '// heckler-ignore-next-line\nconst x = "\ufe01";\nconst y = "\ufe02";\n'
         findings = scanner.scan_text(text)
         assert len(findings) == 1
         assert findings[0].codepoint == 0xFE02
 
     def test_next_line_directive_itself_not_scanned(self) -> None:
         scanner = Scanner()
-        text = '// heckler-ignore-next-line\nclean line\n'
+        text = "// heckler-ignore-next-line\nclean line\n"
         assert scanner.scan_text(text) == []
 
 
@@ -110,29 +112,29 @@ class TestCodepointSpecificSuppression:
 
     def test_next_line_specific_codepoint_suppressed(self) -> None:
         scanner = Scanner()
-        text = '// heckler-ignore-next-line U+FE0F\nconst emoji = "\uFE0F";\n'
+        text = '// heckler-ignore-next-line U+FE0F\nconst emoji = "\ufe0f";\n'
         assert scanner.scan_text(text) == []
 
     def test_next_line_specific_codepoint_others_still_found(self) -> None:
         scanner = Scanner()
-        text = '// heckler-ignore-next-line U+FE0F\nconst x = "\uFE0F\u202E";\n'
+        text = '// heckler-ignore-next-line U+FE0F\nconst x = "\ufe0f\u202e";\n'
         findings = scanner.scan_text(text)
         assert len(findings) == 1
         assert findings[0].codepoint == 0x202E
 
     def test_next_line_multiple_codepoints(self) -> None:
         scanner = Scanner()
-        text = '// heckler-ignore-next-line U+FE0F U+FE0E\nconst x = "\uFE0F\uFE0E";\n'
+        text = '// heckler-ignore-next-line U+FE0F U+FE0E\nconst x = "\ufe0f\ufe0e";\n'
         assert scanner.scan_text(text) == []
 
     def test_inline_specific_codepoint(self) -> None:
         scanner = Scanner()
-        text = 'const x = "\uFE0F"; // heckler-ignore U+FE0F\n'
+        text = 'const x = "\ufe0f"; // heckler-ignore U+FE0F\n'
         assert scanner.scan_text(text) == []
 
     def test_inline_specific_codepoint_others_found(self) -> None:
         scanner = Scanner()
-        text = 'const x = "\uFE0F\u202E"; // heckler-ignore U+FE0F\n'
+        text = 'const x = "\ufe0f\u202e"; // heckler-ignore U+FE0F\n'
         findings = scanner.scan_text(text)
         assert len(findings) == 1
         assert findings[0].codepoint == 0x202E
@@ -143,27 +145,27 @@ class TestLegacyInlineSuppression:
 
     def test_js_comment_still_works(self) -> None:
         scanner = Scanner()
-        text = 'const x = "\uFE01"; // heckler-ignore\n'
+        text = 'const x = "\ufe01"; // heckler-ignore\n'
         assert scanner.scan_text(text) == []
 
     def test_python_comment_still_works(self) -> None:
         scanner = Scanner()
-        text = 'x = "\uFE01"  # heckler-ignore\n'
+        text = 'x = "\ufe01"  # heckler-ignore\n'
         assert scanner.scan_text(text) == []
 
     def test_sql_comment_still_works(self) -> None:
         scanner = Scanner()
-        text = 'SELECT "\uFE01"; -- heckler-ignore\n'
+        text = 'SELECT "\ufe01"; -- heckler-ignore\n'
         assert scanner.scan_text(text) == []
 
     def test_block_comment_still_works(self) -> None:
         scanner = Scanner()
-        text = 'const x = "\uFE01"; /* heckler-ignore */\n'
+        text = 'const x = "\ufe01"; /* heckler-ignore */\n'
         assert scanner.scan_text(text) == []
 
     def test_semicolon_comment_still_works(self) -> None:
         scanner = Scanner()
-        text = 'key = "\uFE01" ; heckler-ignore\n'
+        text = 'key = "\ufe01" ; heckler-ignore\n'
         assert scanner.scan_text(text) == []
 
 
@@ -173,27 +175,27 @@ class TestSuppressionBypassPrevention:
     def test_url_fragment_does_not_suppress(self) -> None:
         """#heckler-ignore inside a URL must NOT suppress detection."""
         scanner = Scanner()
-        text = 'const url = "https://evil.com#heckler-ignore"; const x = "\u202E";\n'
+        text = 'const url = "https://evil.com#heckler-ignore"; const x = "\u202e";\n'
         findings = scanner.scan_text(text)
         assert any(f.codepoint == 0x202E for f in findings)
 
     def test_url_double_slash_does_not_suppress(self) -> None:
         """//heckler-ignore inside a URL must NOT suppress detection."""
         scanner = Scanner()
-        text = 'const url = "http://proxy//heckler-ignore\u202E";\n'
+        text = 'const url = "http://proxy//heckler-ignore\u202e";\n'
         findings = scanner.scan_text(text)
         assert any(f.codepoint == 0x202E for f in findings)
 
     def test_string_literal_does_not_suppress(self) -> None:
         scanner = Scanner()
-        text = 'x = "heckler-ignore"; auth = "\u202E"\n'
+        text = 'x = "heckler-ignore"; auth = "\u202e"\n'
         findings = scanner.scan_text(text)
         assert any(f.codepoint == 0x202E for f in findings)
 
     def test_mid_line_directive_with_trailing_code(self) -> None:
         """Inline directive with code after it should NOT suppress."""
         scanner = Scanner()
-        text = 'x = 1; // heckler-ignore\n; y = "\u202E";\n'
+        text = 'x = 1; // heckler-ignore\n; y = "\u202e";\n'
         # The directive is end-of-line anchored, so line 1 is suppressed
         # but line 2 (with the dangerous char) is not
         findings = scanner.scan_text(text)
@@ -201,13 +203,13 @@ class TestSuppressionBypassPrevention:
 
     def test_variable_name_does_not_suppress(self) -> None:
         scanner = Scanner()
-        text = 'heckler_ignore = "\uFE01"\n'
+        text = 'heckler_ignore = "\ufe01"\n'
         findings = scanner.scan_text(text)
         assert len(findings) == 1
 
     def test_partial_match_does_not_suppress(self) -> None:
         scanner = Scanner()
-        text = 'msg = "run heckler-ignore check \uFE01"\n'
+        text = 'msg = "run heckler-ignore check \ufe01"\n'
         findings = scanner.scan_text(text)
         assert len(findings) == 1
 
@@ -217,34 +219,34 @@ class TestDependencySuppressionBlocked:
 
     def test_dependency_inline_ignore_not_honored(self) -> None:
         scanner = Scanner()
-        text = 'const x = "\uFE01"; // heckler-ignore\n'
+        text = 'const x = "\ufe01"; // heckler-ignore\n'
         findings = scanner.scan_text(text, "node_modules/evil/index.js")
         assert len(findings) == 1
         assert findings[0].codepoint == 0xFE01
 
     def test_dependency_next_line_not_honored(self) -> None:
         scanner = Scanner()
-        text = '// heckler-ignore-next-line\nconst x = "\u202E";\n'
+        text = '// heckler-ignore-next-line\nconst x = "\u202e";\n'
         findings = scanner.scan_text(text, "node_modules/evil/index.js")
         assert len(findings) == 1
         assert findings[0].codepoint == 0x202E
 
     def test_dependency_codepoint_specific_not_honored(self) -> None:
         scanner = Scanner()
-        text = '// heckler-ignore-next-line U+FE0F\nconst x = "\uFE0F";\n'
+        text = '// heckler-ignore-next-line U+FE0F\nconst x = "\ufe0f";\n'
         findings = scanner.scan_text(text, "node_modules/evil/index.js")
         assert len(findings) == 1
 
     def test_dependency_site_packages_not_honored(self) -> None:
         scanner = Scanner()
-        text = '# heckler-ignore-next-line\nx = "\uFE01"\n'
+        text = '# heckler-ignore-next-line\nx = "\ufe01"\n'
         findings = scanner.scan_text(text, "site-packages/evil/__init__.py")
         assert len(findings) == 1
 
     def test_project_code_still_honored(self) -> None:
         """Sanity check: same directive works for project code."""
         scanner = Scanner()
-        text = '// heckler-ignore-next-line\nconst x = "\u202E";\n'
+        text = '// heckler-ignore-next-line\nconst x = "\u202e";\n'
         findings = scanner.scan_text(text, "src/app.js")
         assert findings == []
 
@@ -253,11 +255,12 @@ class TestDependencySuppressionBlocked:
 # 3. Null-byte injection resistance
 # ---------------------------------------------------------------------------
 
+
 class TestNullByteHardening:
     def test_null_after_dangerous_chars_still_detected(self, tmp_path: Path) -> None:
         """Dangerous chars before a null byte should still be found."""
         f = tmp_path / "tricky.js"
-        content = 'const x = "\uFE01";\n'.encode() + b'\x00binary stuff'
+        content = 'const x = "\ufe01";\n'.encode() + b"\x00binary stuff"
         f.write_bytes(content)
 
         scanner = Scanner()
@@ -267,14 +270,14 @@ class TestNullByteHardening:
 
     def test_binary_content_without_dangerous_chars_is_clean(self, tmp_path: Path) -> None:
         f = tmp_path / "binary.js"
-        f.write_bytes(b'\x00\x01\x02')
+        f.write_bytes(b"\x00\x01\x02")
         scanner = Scanner()
         assert scanner.scan_file(f) == []
 
     def test_null_before_dangerous_chars_does_not_hide_them(self, tmp_path: Path) -> None:
         """A NUL in a comment on line 1 must not stop the scan."""
         f = tmp_path / "hidden.js"
-        f.write_bytes(b'//\x00\n' + 'const p = `\uFE01\uFE02\uFE03`;\n'.encode())
+        f.write_bytes(b"//\x00\n" + "const p = `\ufe01\ufe02\ufe03`;\n".encode())
 
         findings = Scanner().scan_file(f)
         assert [x.codepoint for x in findings] == [0xFE01, 0xFE02, 0xFE03]
@@ -283,14 +286,14 @@ class TestNullByteHardening:
     def test_leading_null_does_not_hide_the_file(self, tmp_path: Path) -> None:
         """PHP emits anything before its opening tag, so a file can start with NUL."""
         f = tmp_path / "page.php"
-        f.write_bytes(b'\x00\x00<?php\n' + '$p = "\u202E";\n'.encode())
+        f.write_bytes(b"\x00\x00<?php\n" + '$p = "\u202e";\n'.encode())
 
         findings = Scanner().scan_file(f)
         assert [x.codepoint for x in findings] == [0x202E]
 
     def test_null_does_not_hide_chars_in_directory_walk(self, tmp_path: Path) -> None:
         (tmp_path / "hidden.js").write_bytes(
-            b'//\x00\n' + 'const p = `\uFE01`;\n'.encode(),
+            b"//\x00\n" + "const p = `\ufe01`;\n".encode(),
         )
         assert len(Scanner().scan_path(tmp_path)) == 1
         assert len(Scanner(text_extensions=None).scan_path(tmp_path)) == 1
@@ -298,8 +301,8 @@ class TestNullByteHardening:
     def test_null_byte_midfile_scans_prefix(self, tmp_path: Path) -> None:
         """Dangerous chars in the text portion before null should be found."""
         f = tmp_path / "mixed.js"
-        evil = 'line1 \u200B ok\nline2 \u202E bad\n'.encode()
-        f.write_bytes(evil + b'\x00' + b'binary tail')
+        evil = "line1 \u200b ok\nline2 \u202e bad\n".encode()
+        f.write_bytes(evil + b"\x00" + b"binary tail")
         scanner = Scanner()
         findings = scanner.scan_file(f)
         assert len(findings) == 2
@@ -310,27 +313,28 @@ class TestAllTextBinaryFilter:
 
     def test_unrecognised_binary_is_skipped(self, tmp_path: Path) -> None:
         # Bytes that would decode to U+00A0 if the file were read as text.
-        (tmp_path / "blob.bin").write_bytes(b'\x89PNG\x00\x00' + b'\xc2\xa0' * 10)
+        (tmp_path / "blob.bin").write_bytes(b"\x89PNG\x00\x00" + b"\xc2\xa0" * 10)
         assert Scanner(text_extensions=None).scan_path(tmp_path) == []
 
     def test_unrecognised_text_is_scanned(self, tmp_path: Path) -> None:
-        (tmp_path / "notes.weird").write_text('a\u200Bb\n', encoding='utf-8')
+        (tmp_path / "notes.weird").write_text("a\u200bb\n", encoding="utf-8")
         assert len(Scanner(text_extensions=None).scan_path(tmp_path)) == 1
 
     def test_unrecognised_utf16_is_scanned(self, tmp_path: Path) -> None:
         (tmp_path / "notes.weird").write_bytes(
-            b'\xff\xfe' + 'x = "\u202E";\n'.encode('utf-16-le'),
+            b"\xff\xfe" + 'x = "\u202e";\n'.encode("utf-16-le"),
         )
         assert len(Scanner(text_extensions=None).scan_path(tmp_path)) == 1
 
     def test_known_filename_with_null_is_scanned(self, tmp_path: Path) -> None:
-        (tmp_path / "Makefile").write_bytes(b'#\x00\n' + 'x = \u202E\n'.encode())
+        (tmp_path / "Makefile").write_bytes(b"#\x00\n" + "x = \u202e\n".encode())
         assert len(Scanner(text_extensions=None).scan_path(tmp_path)) == 1
 
 
 # ---------------------------------------------------------------------------
 # 4. Missing --config path error
 # ---------------------------------------------------------------------------
+
 
 class TestMissingConfigError:
     def test_load_config_raises_on_missing_explicit_path(self) -> None:
@@ -351,6 +355,7 @@ class TestMissingConfigError:
 # ---------------------------------------------------------------------------
 # 5. Unsupported ecosystem warnings
 # ---------------------------------------------------------------------------
+
 
 class TestUnsupportedEcosystemWarning:
     def test_cargo_emits_warning(self, capsys: object) -> None:
@@ -373,14 +378,15 @@ class TestUnsupportedEcosystemWarning:
 # 6. Zip member filtering
 # ---------------------------------------------------------------------------
 
+
 class TestZipMemberFiltering:
     def test_zip_extracts_validated_members_individually(self, tmp_path: Path) -> None:
         """Ensure zip extraction still works correctly after switching
         from extractall() to individual extract()."""
         zip_path = tmp_path / "test.zip"
-        with zipfile.ZipFile(zip_path, 'w') as zf:
-            zf.writestr("pkg/index.js", b'module.exports = {};')
-            zf.writestr("pkg/lib/util.js", b'exports.x = 1;')
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("pkg/index.js", b"module.exports = {};")
+            zf.writestr("pkg/lib/util.js", b"exports.x = 1;")
 
         extract_dir = tmp_path / "out"
         extract_dir.mkdir()
@@ -391,7 +397,7 @@ class TestZipMemberFiltering:
 
     def test_wheel_with_planted_chars_detected(self, tmp_path: Path) -> None:
         """End-to-end: a .whl with dangerous chars is extracted and scanned."""
-        evil_py = 'access = "\u202Eadmin"\n'.encode()
+        evil_py = 'access = "\u202eadmin"\n'.encode()
         whl_path = tmp_path / "evil-1.0.0-py3-none-any.whl"
         with zipfile.ZipFile(whl_path, "w") as zf:
             zf.writestr("evil/__init__.py", evil_py)
@@ -407,16 +413,57 @@ class TestZipMemberFiltering:
 # 7. Extended file extensions
 # ---------------------------------------------------------------------------
 
+
 class TestExtendedExtensions:
     # Expected extensions added across the hardening commits.
     _EXPECTED = {
-        '.ps1', '.bat', '.cmd', '.fish', '.ejs', '.hbs', '.gradle',
-        '.proto', '.graphql', '.dart', '.ex', '.exs', '.erl', '.hrl',
-        '.zig', '.nim', '.ml', '.mli', '.hs', '.lhs', '.clj', '.cljs',
-        '.cljc', '.jl', '.elm', '.v', '.d', '.ada', '.adb', '.ads',
-        '.f90', '.groovy', '.cr', '.purs', '.rkt', '.lisp', '.cl',
-        '.el', '.asm', '.s', '.m', '.mm', '.vb', '.vbs', '.pp', '.pas',
-        '.tcl',
+        ".ps1",
+        ".bat",
+        ".cmd",
+        ".fish",
+        ".ejs",
+        ".hbs",
+        ".gradle",
+        ".proto",
+        ".graphql",
+        ".dart",
+        ".ex",
+        ".exs",
+        ".erl",
+        ".hrl",
+        ".zig",
+        ".nim",
+        ".ml",
+        ".mli",
+        ".hs",
+        ".lhs",
+        ".clj",
+        ".cljs",
+        ".cljc",
+        ".jl",
+        ".elm",
+        ".v",
+        ".d",
+        ".ada",
+        ".adb",
+        ".ads",
+        ".f90",
+        ".groovy",
+        ".cr",
+        ".purs",
+        ".rkt",
+        ".lisp",
+        ".cl",
+        ".el",
+        ".asm",
+        ".s",
+        ".m",
+        ".mm",
+        ".vb",
+        ".vbs",
+        ".pp",
+        ".pas",
+        ".tcl",
     }
 
     def test_all_expected_extensions_present(self) -> None:
@@ -426,7 +473,7 @@ class TestExtendedExtensions:
     def test_extension_actually_scanned(self, tmp_path: Path) -> None:
         """Smoke-test: a file with a non-obvious extension is scanned."""
         f = tmp_path / "test.zig"
-        f.write_text('const x = "\uFE01";\n')
+        f.write_text('const x = "\ufe01";\n')
         assert len(Scanner().scan_file(f)) == 1
 
 
@@ -434,11 +481,32 @@ class TestExtendedExtensions:
 # 8. DEP_SCAN_EXTENSIONS covers multi-language ecosystems
 # ---------------------------------------------------------------------------
 
+
 class TestDepScanExtensions:
     _EXPECTED = {
-        '.rs', '.go', '.java', '.kt', '.scala', '.cs', '.swift',
-        '.c', '.cpp', '.h', '.hpp', '.lua', '.dart', '.ex', '.exs',
-        '.erl', '.zig', '.nim', '.ml', '.hs', '.clj', '.jl', '.cr',
+        ".rs",
+        ".go",
+        ".java",
+        ".kt",
+        ".scala",
+        ".cs",
+        ".swift",
+        ".c",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".lua",
+        ".dart",
+        ".ex",
+        ".exs",
+        ".erl",
+        ".zig",
+        ".nim",
+        ".ml",
+        ".hs",
+        ".clj",
+        ".jl",
+        ".cr",
     }
 
     def test_all_expected_dep_extensions_present(self) -> None:
@@ -449,21 +517,21 @@ class TestDepScanExtensions:
         """Dep scanning picks up source files inside vendor/."""
         pkg = tmp_path / "vendor" / "some-crate"
         pkg.mkdir(parents=True)
-        (pkg / "lib.rs").write_text('let x = "\uFE01";\n')
+        (pkg / "lib.rs").write_text('let x = "\ufe01";\n')
         findings = Scanner(scan_deps=True).scan_path(tmp_path)
         assert any(".rs" in f.file for f in findings)
 
     def test_scan_deps_includes_target_dir(self, tmp_path: Path) -> None:
         target = tmp_path / "target" / "debug" / "build" / "some-crate"
         target.mkdir(parents=True)
-        (target / "lib.rs").write_text('let x = "\uFE01";\n')
+        (target / "lib.rs").write_text('let x = "\ufe01";\n')
         findings = Scanner(scan_deps=True).scan_path(tmp_path)
         assert any("target" in f.file for f in findings)
 
     def test_target_skipped_without_scan_deps(self, tmp_path: Path) -> None:
         target = tmp_path / "target" / "debug"
         target.mkdir(parents=True)
-        (target / "lib.rs").write_text('let x = "\uFE01";\n')
+        (target / "lib.rs").write_text('let x = "\ufe01";\n')
         findings = Scanner(scan_deps=False).scan_path(tmp_path)
         assert not any("target" in f.file for f in findings)
 
@@ -472,34 +540,45 @@ class TestDepScanExtensions:
 # 9. Well-known extensionless filenames
 # ---------------------------------------------------------------------------
 
+
 class TestKnownFilenames:
     def test_expected_filenames_in_set(self) -> None:
         expected = {
-            'Makefile', 'Dockerfile', 'Gemfile', 'Rakefile', 'Vagrantfile',
-            'Procfile', 'Justfile', 'BUILD', 'Podfile',
-            '.gitattributes', '.gitignore', '.dockerignore',
+            "Makefile",
+            "Dockerfile",
+            "Gemfile",
+            "Rakefile",
+            "Vagrantfile",
+            "Procfile",
+            "Justfile",
+            "BUILD",
+            "Podfile",
+            ".gitattributes",
+            ".gitignore",
+            ".dockerignore",
         }
         missing = expected - KNOWN_FILENAMES
         assert not missing, f"Missing from KNOWN_FILENAMES: {missing}"
 
     def test_known_filename_actually_scanned(self, tmp_path: Path) -> None:
         """Smoke-test: a Makefile in a directory walk is picked up."""
-        (tmp_path / "Makefile").write_text('VAR = "\uFE01"\n')
+        (tmp_path / "Makefile").write_text('VAR = "\ufe01"\n')
         findings = Scanner().scan_path(tmp_path)
         assert any("Makefile" in f.file for f in findings)
 
     def test_unknown_extensionless_file_skipped(self, tmp_path: Path) -> None:
-        (tmp_path / "randomfile").write_text('VAR = "\uFE01"\n')
+        (tmp_path / "randomfile").write_text('VAR = "\ufe01"\n')
         assert not Scanner().scan_path(tmp_path)
 
     def test_all_text_scans_extensionless(self, tmp_path: Path) -> None:
-        (tmp_path / "randomfile").write_text('VAR = "\uFE01"\n')
+        (tmp_path / "randomfile").write_text('VAR = "\ufe01"\n')
         assert Scanner(text_extensions=None).scan_path(tmp_path)
 
 
 # ---------------------------------------------------------------------------
 # 10. target/ classified as dependency (suppression blocked)
 # ---------------------------------------------------------------------------
+
 
 class TestTargetDirClassifiedAsDependency:
     """Files inside target/ must be classified as dependency code so that
@@ -508,21 +587,21 @@ class TestTargetDirClassifiedAsDependency:
 
     def test_target_dir_inline_ignore_not_honored(self) -> None:
         scanner = Scanner()
-        text = 'let x = "\uFE01"; // heckler-ignore\n'
+        text = 'let x = "\ufe01"; // heckler-ignore\n'
         findings = scanner.scan_text(text, "target/some-crate/src/lib.rs")
         assert len(findings) == 1
         assert findings[0].codepoint == 0xFE01
 
     def test_target_dir_next_line_not_honored(self) -> None:
         scanner = Scanner()
-        text = '// heckler-ignore-next-line\nlet x = "\u202E";\n'
+        text = '// heckler-ignore-next-line\nlet x = "\u202e";\n'
         findings = scanner.scan_text(text, "target/some-crate/src/lib.rs")
         assert len(findings) == 1
         assert findings[0].codepoint == 0x202E
 
     def test_target_dir_classified_as_dependency(self) -> None:
         scanner = Scanner()
-        text = 'let x = "\uFE01";\n'
+        text = 'let x = "\ufe01";\n'
         findings = scanner.scan_text(text, "target/some-crate/src/lib.rs")
         assert findings[0].source == "dependency"
         assert findings[0].package == "some-crate"
@@ -532,42 +611,43 @@ class TestTargetDirClassifiedAsDependency:
 # 11. Non-UTF-8 encoding detection (prevents encoding evasion)
 # ---------------------------------------------------------------------------
 
+
 class TestEncodingDetection:
     """Files encoded as UTF-16/32 must be decoded correctly so that
     dangerous codepoints are not missed."""
 
     def test_utf16_le_bom_detected(self, tmp_path: Path) -> None:
         f = tmp_path / "evil.js"
-        f.write_bytes('const x = "\u202E";\n'.encode('utf-16-le'))
+        f.write_bytes('const x = "\u202e";\n'.encode("utf-16-le"))
         # prepend BOM
-        f.write_bytes(b'\xff\xfe' + 'const x = "\u202E";\n'.encode('utf-16-le'))
+        f.write_bytes(b"\xff\xfe" + 'const x = "\u202e";\n'.encode("utf-16-le"))
         findings = Scanner().scan_file(f)
         assert any(fd.codepoint == 0x202E for fd in findings)
 
     def test_utf16_be_bom_detected(self, tmp_path: Path) -> None:
         f = tmp_path / "evil.js"
-        f.write_bytes(b'\xfe\xff' + 'const x = "\u202E";\n'.encode('utf-16-be'))
+        f.write_bytes(b"\xfe\xff" + 'const x = "\u202e";\n'.encode("utf-16-be"))
         findings = Scanner().scan_file(f)
         assert any(fd.codepoint == 0x202E for fd in findings)
 
     def test_utf32_le_bom_detected(self, tmp_path: Path) -> None:
         f = tmp_path / "evil.js"
-        f.write_bytes(b'\xff\xfe\x00\x00' + 'const x = "\u202E";\n'.encode('utf-32-le'))
+        f.write_bytes(b"\xff\xfe\x00\x00" + 'const x = "\u202e";\n'.encode("utf-32-le"))
         findings = Scanner().scan_file(f)
         assert any(fd.codepoint == 0x202E for fd in findings)
 
     def test_utf8_still_works(self, tmp_path: Path) -> None:
         """Regression: normal UTF-8 files must still be scanned."""
         f = tmp_path / "normal.js"
-        f.write_text('const x = "\u202E";\n')
+        f.write_text('const x = "\u202e";\n')
         findings = Scanner().scan_file(f)
         assert len(findings) == 1
 
     def test_utf16_not_misdetected_as_binary(self, tmp_path: Path) -> None:
         """UTF-16 files contain null bytes — they must NOT be skipped."""
         f = tmp_path / "data.js"
-        text = 'let payload = "\uFE0F";\n'
-        f.write_bytes(b'\xff\xfe' + text.encode('utf-16-le'))
+        text = 'let payload = "\ufe0f";\n'
+        f.write_bytes(b"\xff\xfe" + text.encode("utf-16-le"))
         findings = Scanner().scan_file(f)
         assert len(findings) == 1
         assert findings[0].codepoint == 0xFE0F

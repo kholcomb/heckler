@@ -27,7 +27,7 @@ class TestMinimalYamlParse:
         assert result["allowlist"] == ["*.po", "**/locale/**"]
 
     def test_inline_list(self) -> None:
-        result = _minimal_yaml_parse('items: [a, b, c]\n')
+        result = _minimal_yaml_parse("items: [a, b, c]\n")
         assert result["items"] == ["a", "b", "c"]
 
     def test_empty_list(self) -> None:
@@ -55,12 +55,7 @@ class TestMinimalYamlParse:
         assert result["extra_extensions"] == [".foo", ".bar"]
 
     def test_hash_inside_a_value_is_kept(self) -> None:
-        text = (
-            "allowlist:\n"
-            '  - "docs/#old/*"\n'
-            "  - notes#1.txt\n"
-            "  - 'a # b'  # trailing\n"
-        )
+        text = "allowlist:\n  - \"docs/#old/*\"\n  - notes#1.txt\n  - 'a # b'  # trailing\n"
         result = _minimal_yaml_parse(text)
         assert result["allowlist"] == ["docs/#old/*", "notes#1.txt", "a # b"]
 
@@ -84,6 +79,7 @@ class TestLoadConfig:
 
     def test_missing_config_raises_error(self) -> None:
         import pytest
+
         with pytest.raises(FileNotFoundError, match="Config file not found"):
             load_config(config_path="/nonexistent/.heckler.yml")
 

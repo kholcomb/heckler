@@ -60,6 +60,8 @@ class CharInfo:
         self.severity = severity
 
 
+# Hand-aligned data tables: keep the formatter out.
+# fmt: off
 # Known codepoints with explicit metadata
 CHAR_DB: dict[int, CharInfo] = {
     # Zero-width characters (MEDIUM)
@@ -192,6 +194,7 @@ DANGEROUS_UNICODE_RE = re.compile(
     r'|[\U000E0001\U000E0020-\U000E007F]'  # Tag characters
     r'|[\U000E0100-\U000E01EF]'            # Variation Selectors Supplement (Glassworm secondary)
 )
+# fmt: on
 
 
 def get_char_info(cp: int) -> CharInfo:
@@ -226,6 +229,7 @@ def get_char_info(cp: int) -> CharInfo:
 # superset of the bases in Unicode's emoji-variation-sequences.txt (checked
 # against 18.0), kept as block ranges so that new emoji need no update here.
 # The ASCII keycap bases are separate: they only count when U+20E3 follows.
+# fmt: off
 _EMOJI_BASE_RANGES: tuple[tuple[int, int], ...] = (
     (0x00A9, 0x00A9),    # Copyright
     (0x00AE, 0x00AE),    # Registered
@@ -246,8 +250,9 @@ _EMOJI_BASE_RANGES: tuple[tuple[int, int], ...] = (
     (0x3299, 0x3299),    # Circled ideograph secret
     (0x1F000, 0x1FAFF),  # Emoji blocks, including skin tone modifiers
 )
+# fmt: on
 _KEYCAP_BASES = frozenset("0123456789#*")
-_COMBINING_ENCLOSING_KEYCAP = "\u20E3"
+_COMBINING_ENCLOSING_KEYCAP = "\u20e3"
 _PRESENTATION_SELECTORS = frozenset({0xFE0E, 0xFE0F})
 _ZERO_WIDTH_JOINER = 0x200D
 

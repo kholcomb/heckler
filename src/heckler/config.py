@@ -42,12 +42,10 @@ def load_config(
         if p.exists():
             raw = _load_yaml_file(p)
         else:
-            raise FileNotFoundError(
-                f"Config file not found: {config_path}"
-            )
+            raise FileNotFoundError(f"Config file not found: {config_path}")
     else:
         # Auto-discover
-        for candidate in ('.heckler.yml', '.heckler.yaml'):
+        for candidate in (".heckler.yml", ".heckler.yaml"):
             p = Path(candidate)
             if p.exists():
                 raw = _load_yaml_file(p)
@@ -58,26 +56,26 @@ def load_config(
 
     config = Config.defaults()
 
-    if 'severity' in raw:
-        sev_str = str(raw['severity']).upper()
+    if "severity" in raw:
+        sev_str = str(raw["severity"]).upper()
         with contextlib.suppress(KeyError):
             config.severity_threshold = Severity[sev_str]
 
-    if 'allowlist' in raw and isinstance(raw['allowlist'], list):
-        config.exclude_patterns = [str(p) for p in raw['allowlist']]
+    if "allowlist" in raw and isinstance(raw["allowlist"], list):
+        config.exclude_patterns = [str(p) for p in raw["allowlist"]]
 
-    if 'allow_bom' in raw:
-        config.allow_bom = bool(raw['allow_bom'])
+    if "allow_bom" in raw:
+        config.allow_bom = bool(raw["allow_bom"])
 
-    if 'allow_emoji' in raw:
-        config.allow_emoji = bool(raw['allow_emoji'])
+    if "allow_emoji" in raw:
+        config.allow_emoji = bool(raw["allow_emoji"])
 
-    if 'extra_skip_dirs' in raw and isinstance(raw['extra_skip_dirs'], list):
-        config.skip_dirs = config.skip_dirs | frozenset(str(d) for d in raw['extra_skip_dirs'])
+    if "extra_skip_dirs" in raw and isinstance(raw["extra_skip_dirs"], list):
+        config.skip_dirs = config.skip_dirs | frozenset(str(d) for d in raw["extra_skip_dirs"])
 
-    if 'extra_extensions' in raw and isinstance(raw['extra_extensions'], list):
+    if "extra_extensions" in raw and isinstance(raw["extra_extensions"], list):
         config.text_extensions = config.text_extensions | frozenset(
-            str(e) if e.startswith('.') else f'.{e}' for e in raw['extra_extensions']
+            str(e) if e.startswith(".") else f".{e}" for e in raw["extra_extensions"]
         )
 
     config.scan_deps = scan_deps
@@ -87,9 +85,10 @@ def load_config(
 
 def _load_yaml_file(path: Path) -> dict[str, object]:
     """Load a YAML file. Tries PyYAML first, falls back to minimal parser."""
-    text = path.read_text(encoding='utf-8')
+    text = path.read_text(encoding="utf-8")
     try:
         import yaml  # type: ignore[import-untyped]
+
         data = yaml.safe_load(text)
         return data if isinstance(data, dict) else {}
     except ImportError:
@@ -98,25 +97,27 @@ def _load_yaml_file(path: Path) -> dict[str, object]:
 
 def _load_pyproject_section() -> dict[str, object]:
     """Load [tool.heckler] from pyproject.toml."""
-    pyproject = Path('pyproject.toml')
+    pyproject = Path("pyproject.toml")
     if not pyproject.exists():
         return {}
     try:
         # Python 3.11+
         import tomllib  # type: ignore[import-not-found]
-        with open(pyproject, 'rb') as f:
+
+        with open(pyproject, "rb") as f:
             data = tomllib.load(f)
     except ImportError:
         try:
             import tomli as tomllib  # type: ignore[import-not-found]
-            with open(pyproject, 'rb') as f:
+
+            with open(pyproject, "rb") as f:
                 data = tomllib.load(f)
         except ImportError:
             return {}
-    tool: dict[str, object] = data.get('tool', {})
+    tool: dict[str, object] = data.get("tool", {})
     if not isinstance(tool, dict):
         return {}
-    result = tool.get('heckler', {})
+    result = tool.get("heckler", {})
     return result if isinstance(result, dict) else {}
 
 
@@ -126,15 +127,15 @@ def _strip_inline_comment(value: str) -> str:
     As in YAML, ``#`` starts a comment only after whitespace, and never
     inside a quoted string.
     """
-    quote = ''
+    quote = ""
     for i, ch in enumerate(value):
-        prev = value[i - 1] if i else ' '
+        prev = value[i - 1] if i else " "
         if quote:
             if ch == quote:
-                quote = ''
-        elif ch in '"\'' and (prev.isspace() or prev in '[,'):
+                quote = ""
+        elif ch in "\"'" and (prev.isspace() or prev in "[,"):
             quote = ch
-        elif ch == '#' and prev.isspace():
+        elif ch == "#" and prev.isspace():
             return value[:i].rstrip()
     return value
 
@@ -151,11 +152,11 @@ def _minimal_yaml_parse(text: str) -> dict[str, object]:
 
     for line in text.splitlines():
         stripped = line.strip()
-        if not stripped or stripped.startswith('#'):
+        if not stripped or stripped.startswith("#"):
             continue
 
         # List item under a key
-        if stripped.startswith('- ') and current_key is not None:
+        if stripped.startswith("- ") and current_key is not None:
             if current_list is None:
                 current_list = []
             val = _strip_inline_comment(stripped[2:].strip()).strip('"').strip("'")
@@ -164,7 +165,7 @@ def _minimal_yaml_parse(text: str) -> dict[str, object]:
             continue
 
         # Key: value pair
-        m = re.match(r'^(\w[\w_-]*)\s*:\s*(.*)', stripped)
+        m = re.match(r"^(\w[\w_-]*)\s*:\s*(.*)", stripped)
         if m:
             # Save previous list
             key = m.group(1)
@@ -177,19 +178,17 @@ def _minimal_yaml_parse(text: str) -> dict[str, object]:
                 # Could be a list or nested dict following
                 result[key] = []
                 current_list = []
-            elif val_str == '[]':
+            elif val_str == "[]":
                 result[key] = []
                 current_list = []
-            elif val_str.lower() in ('true', 'yes'):
+            elif val_str.lower() in ("true", "yes"):
                 result[key] = True
-            elif val_str.lower() in ('false', 'no'):
+            elif val_str.lower() in ("false", "no"):
                 result[key] = False
-            elif val_str.startswith('[') and val_str.endswith(']'):
+            elif val_str.startswith("[") and val_str.endswith("]"):
                 # Inline list
                 items = [
-                    i.strip().strip('"').strip("'")
-                    for i in val_str[1:-1].split(',')
-                    if i.strip()
+                    i.strip().strip('"').strip("'") for i in val_str[1:-1].split(",") if i.strip()
                 ]
                 result[key] = items
             else:

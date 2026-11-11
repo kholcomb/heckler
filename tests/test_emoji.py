@@ -15,16 +15,16 @@ from heckler.config import load_config
 from heckler.formatters.text import format_text
 from heckler.scanner import Scanner
 
-WARNING = "\u26A0"          # takes U+FE0F to render as an emoji
+WARNING = "\u26a0"  # takes U+FE0F to render as an emoji
 HEART = "\u2764"
-FLAG = "\U0001F3F3"
-WOMAN = "\U0001F469"
-LAPTOP = "\U0001F4BB"
-FIRE = "\U0001F525"
-SKIN_TONE = "\U0001F3FD"
-VS15, VS16 = "\uFE0E", "\uFE0F"
-ZWJ = "\u200D"
-KEYCAP = "\u20E3"
+FLAG = "\U0001f3f3"
+WOMAN = "\U0001f469"
+LAPTOP = "\U0001f4bb"
+FIRE = "\U0001f525"
+SKIN_TONE = "\U0001f3fd"
+VS15, VS16 = "\ufe0e", "\ufe0f"
+ZWJ = "\u200d"
+KEYCAP = "\u20e3"
 
 WELL_FORMED = [
     pytest.param(f"# {WARNING}{VS16} Warning", id="emoji-presentation"),
@@ -35,7 +35,7 @@ WELL_FORMED = [
     pytest.param(f"{WOMAN}{ZWJ}{LAPTOP}", id="zwj-profession"),
     pytest.param(f"{WOMAN}{SKIN_TONE}{ZWJ}{LAPTOP}", id="zwj-with-skin-tone"),
     pytest.param(f"{HEART}{VS16}{ZWJ}{FIRE}", id="zwj-after-selector"),
-    pytest.param(f"{FLAG}{VS16}{ZWJ}\U0001F308", id="rainbow-flag"),
+    pytest.param(f"{FLAG}{VS16}{ZWJ}\U0001f308", id="rainbow-flag"),
     pytest.param(f"{WARNING}{VS16} and {HEART}{VS16}", id="two-on-a-line"),
 ]
 
@@ -62,31 +62,41 @@ class TestWellFormedEmoji:
 
 
 class TestStillFlagged:
-    @pytest.mark.parametrize(("text", "expected"), [
-        pytest.param(f'x = "{VS16}"', [Severity.CRITICAL], id="selector-after-punctuation"),
-        pytest.param(f"a{VS16}", [Severity.CRITICAL], id="selector-after-letter"),
-        pytest.param(VS16, [Severity.CRITICAL], id="selector-at-line-start"),
-        pytest.param(f"1{VS16}", [Severity.CRITICAL], id="digit-without-keycap"),
-        pytest.param(f"{WARNING}\uFE00", [Severity.CRITICAL], id="other-selector-after-emoji"),
-        pytest.param(
-            f"{WARNING}{VS16}{VS16}", [Severity.CRITICAL] * 2, id="run-of-two",
-        ),
-        pytest.param(
-            f"{WARNING}{VS16}\uFE01\uFE02", [Severity.CRITICAL] * 3, id="payload-behind-an-emoji",
-        ),
-        pytest.param(
-            f"{WARNING}{VS16}\U000E0100", [Severity.CRITICAL] * 2, id="supplement-run",
-        ),
-        pytest.param(f"ad{ZWJ}min", [Severity.MEDIUM], id="joiner-between-letters"),
-        pytest.param(f"{WOMAN}{ZWJ}x", [Severity.MEDIUM], id="joiner-before-letter"),
-        pytest.param(f"x{ZWJ}{LAPTOP}", [Severity.MEDIUM], id="joiner-after-letter"),
-        pytest.param(f"{WOMAN}{ZWJ}", [Severity.MEDIUM], id="joiner-at-line-end"),
-        pytest.param(
-            f"a{VS16}{ZWJ}{FIRE}", [Severity.CRITICAL, Severity.MEDIUM],
-            id="joiner-after-misplaced-selector",
-        ),
-        pytest.param(f"{WARNING}\u200B", [Severity.MEDIUM], id="zero-width-space-after-emoji"),
-    ])
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            pytest.param(f'x = "{VS16}"', [Severity.CRITICAL], id="selector-after-punctuation"),
+            pytest.param(f"a{VS16}", [Severity.CRITICAL], id="selector-after-letter"),
+            pytest.param(VS16, [Severity.CRITICAL], id="selector-at-line-start"),
+            pytest.param(f"1{VS16}", [Severity.CRITICAL], id="digit-without-keycap"),
+            pytest.param(f"{WARNING}\ufe00", [Severity.CRITICAL], id="other-selector-after-emoji"),
+            pytest.param(
+                f"{WARNING}{VS16}{VS16}",
+                [Severity.CRITICAL] * 2,
+                id="run-of-two",
+            ),
+            pytest.param(
+                f"{WARNING}{VS16}\ufe01\ufe02",
+                [Severity.CRITICAL] * 3,
+                id="payload-behind-an-emoji",
+            ),
+            pytest.param(
+                f"{WARNING}{VS16}\U000e0100",
+                [Severity.CRITICAL] * 2,
+                id="supplement-run",
+            ),
+            pytest.param(f"ad{ZWJ}min", [Severity.MEDIUM], id="joiner-between-letters"),
+            pytest.param(f"{WOMAN}{ZWJ}x", [Severity.MEDIUM], id="joiner-before-letter"),
+            pytest.param(f"x{ZWJ}{LAPTOP}", [Severity.MEDIUM], id="joiner-after-letter"),
+            pytest.param(f"{WOMAN}{ZWJ}", [Severity.MEDIUM], id="joiner-at-line-end"),
+            pytest.param(
+                f"a{VS16}{ZWJ}{FIRE}",
+                [Severity.CRITICAL, Severity.MEDIUM],
+                id="joiner-after-misplaced-selector",
+            ),
+            pytest.param(f"{WARNING}\u200b", [Severity.MEDIUM], id="zero-width-space-after-emoji"),
+        ],
+    )
     def test_reported(self, text: str, expected: list[Severity]) -> None:
         assert [f.severity for f in Scanner().scan_text(text)] == expected
 
@@ -95,14 +105,14 @@ class TestStillFlagged:
         assert [f.severity for f in findings] == [Severity.CRITICAL]
 
     def test_dependency_code_gets_the_same_rule(self) -> None:
-        text = f'log("{WARNING}{VS16}"); x = `\uFE01\uFE02`;'
+        text = f'log("{WARNING}{VS16}"); x = `\ufe01\ufe02`;'
         findings = Scanner(scan_deps=True).scan_text(text, "node_modules/pkg/index.js")
         assert [f.codepoint for f in findings] == [0xFE01, 0xFE02]
 
 
 class TestEmojiContext:
     def test_only_selectors_and_joiners_qualify(self) -> None:
-        text = f"{WARNING}\u200B"
+        text = f"{WARNING}\u200b"
         assert not is_emoji_context(text, 1)
 
     def test_index_at_either_end(self) -> None:

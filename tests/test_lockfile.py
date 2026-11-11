@@ -46,7 +46,7 @@ class TestDetectEcosystem:
 
 class TestParseChangedPackages:
     def test_npm_lockfile_diff(self) -> None:
-        diff = '''\
+        diff = """\
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -1,5 +1,10 @@
@@ -56,28 +56,28 @@ class TestParseChangedPackages:
 +    "node_modules/@scope/pkg": {
 +      "version": "1.0.0"
      }
-'''
+"""
         packages = parse_changed_packages(diff, "npm")
         names = [p[0] for p in packages]
         assert "lodash" in names
         assert "@scope/pkg" in names
 
     def test_pip_diff(self) -> None:
-        diff = '''\
+        diff = """\
 --- a/requirements.txt
 +++ b/requirements.txt
 @@ -1,3 +1,5 @@
  flask==3.0.0
 +requests==2.31.0
 +django>=4.2
-'''
+"""
         packages = parse_changed_packages(diff, "pip")
         names = [p[0] for p in packages]
         assert "requests" in names
         assert "django" in names
 
     def test_yarn_diff(self) -> None:
-        diff = '''\
+        diff = """\
 --- a/yarn.lock
 +++ b/yarn.lock
 @@ -1,5 +1,10 @@
@@ -85,14 +85,14 @@ class TestParseChangedPackages:
 +  version "4.17.21"
 +"@babel/core@^7.24.0":
 +  version "7.24.0"
-'''
+"""
         packages = parse_changed_packages(diff, "yarn")
         names = [p[0] for p in packages]
         assert "lodash" in names
         assert "@babel/core" in names
 
     def test_pnpm_diff(self) -> None:
-        diff = '''\
+        diff = """\
 --- a/pnpm-lock.yaml
 +++ b/pnpm-lock.yaml
 @@ -1,5 +1,10 @@
@@ -100,7 +100,7 @@ class TestParseChangedPackages:
 +    resolution: {integrity: sha512-xxx}
 +  /@scope/pkg@1.0.0:
 +    resolution: {integrity: sha512-yyy}
-'''
+"""
         packages = parse_changed_packages(diff, "pnpm")
         names = [p[0] for p in packages]
         assert "lodash" in names
@@ -121,7 +121,11 @@ REPO_ROOT = Path(__file__).parent.parent
 
 def _git(*args: str, cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["git", *args], capture_output=True, text=True, timeout=10, cwd=cwd,
+        ["git", *args],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        cwd=cwd,
     )
 
 
@@ -147,15 +151,18 @@ class TestGetLockfileDiffIntegration:
     def test_staged_diff_returns_content(self) -> None:
         try:
             # Create a new lockfile with a known package
-            lockfile_content = json.dumps({
-                "name": "test",
-                "lockfileVersion": 3,
-                "packages": {
-                    "node_modules/heckler-test-pkg": {
-                        "version": "1.0.0",
-                    }
-                }
-            }, indent=2)
+            lockfile_content = json.dumps(
+                {
+                    "name": "test",
+                    "lockfileVersion": 3,
+                    "packages": {
+                        "node_modules/heckler-test-pkg": {
+                            "version": "1.0.0",
+                        }
+                    },
+                },
+                indent=2,
+            )
             self.TEMP_LOCKFILE.write_text(lockfile_content, encoding="utf-8")
             _git("add", "--", str(self.TEMP_LOCKFILE))
 
@@ -169,14 +176,17 @@ class TestGetLockfileDiffIntegration:
 
     def test_parse_staged_diff_extracts_packages(self) -> None:
         try:
-            lockfile_content = json.dumps({
-                "name": "test",
-                "lockfileVersion": 3,
-                "packages": {
-                    "node_modules/lodash": {"version": "4.17.21"},
-                    "node_modules/@scope/evil-pkg": {"version": "0.0.1"},
-                }
-            }, indent=2)
+            lockfile_content = json.dumps(
+                {
+                    "name": "test",
+                    "lockfileVersion": 3,
+                    "packages": {
+                        "node_modules/lodash": {"version": "4.17.21"},
+                        "node_modules/@scope/evil-pkg": {"version": "0.0.1"},
+                    },
+                },
+                indent=2,
+            )
             self.TEMP_LOCKFILE.write_text(lockfile_content, encoding="utf-8")
             _git("add", "--", str(self.TEMP_LOCKFILE))
 
@@ -274,18 +284,21 @@ class TestScanChangedDepsIntegration:
             evil_dir = self.TEMP_NM / "evil-pkg"
             evil_dir.mkdir(parents=True)
             (evil_dir / "index.js").write_text(
-                'const payload = `\uFE00\uFE01\uFE0F`;\n',
+                "const payload = `\ufe00\ufe01\ufe0f`;\n",
                 encoding="utf-8",
             )
 
             # 2. Create and stage a lockfile referencing it
-            lockfile_content = json.dumps({
-                "name": "test",
-                "lockfileVersion": 3,
-                "packages": {
-                    "node_modules/evil-pkg": {"version": "1.0.0"},
-                }
-            }, indent=2)
+            lockfile_content = json.dumps(
+                {
+                    "name": "test",
+                    "lockfileVersion": 3,
+                    "packages": {
+                        "node_modules/evil-pkg": {"version": "1.0.0"},
+                    },
+                },
+                indent=2,
+            )
             self.TEMP_LOCKFILE.write_text(lockfile_content, encoding="utf-8")
             _git("add", "--", str(self.TEMP_LOCKFILE))
 
@@ -309,11 +322,18 @@ class TestScanChangedDepsIntegration:
 # which is what get_lockfile_diff() asks git for.
 # ---------------------------------------------------------------------------
 
+
 def _full_diff(old: str, new: str) -> str:
-    return "\n".join(difflib.unified_diff(
-        old.splitlines(), new.splitlines(), "a/lock", "b/lock",
-        n=1_000_000, lineterm="",
-    ))
+    return "\n".join(
+        difflib.unified_diff(
+            old.splitlines(),
+            new.splitlines(),
+            "a/lock",
+            "b/lock",
+            n=1_000_000,
+            lineterm="",
+        )
+    )
 
 
 _NPM_LOCK: dict[str, object] = {
@@ -518,7 +538,8 @@ class TestPoetryVersionBumps:
 
     def test_new_package(self) -> None:
         new = _POETRY_LOCK.replace(
-            "[metadata]", '[[package]]\nname = "idna"\nversion = "3.7"\n\n[metadata]',
+            "[metadata]",
+            '[[package]]\nname = "idna"\nversion = "3.7"\n\n[metadata]',
         )
         assert parse_changed_packages(_full_diff(_POETRY_LOCK, new), "poetry") == [
             ("idna", ""),
@@ -530,12 +551,20 @@ class TestVersionBumpIntegration:
     """A staged bump of an installed package is scanned, in a throwaway repo."""
 
     def test_staged_bump_is_scanned(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         def git(*args: str) -> None:
             result = _git(
-                "-c", "user.name=test", "-c", "user.email=test@example.invalid",
-                "-c", "commit.gpgsign=false", *args, cwd=tmp_path,
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+                cwd=tmp_path,
             )
             assert result.returncode == 0, result.stderr
 
@@ -564,7 +593,8 @@ class TestVersionBumpIntegration:
             pkg = tmp_path / "node_modules" / name
             pkg.mkdir(parents=True)
             (pkg / "index.js").write_text(
-                'const payload = `\uFE00\uFE01\uFE02`;\n', encoding="utf-8",
+                "const payload = `\ufe00\ufe01\ufe02`;\n",
+                encoding="utf-8",
             )
 
         # Only a line well below the package name changes, so the name is

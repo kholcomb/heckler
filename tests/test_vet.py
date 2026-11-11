@@ -96,7 +96,7 @@ class TestValidateArchiveMember:
 class TestSafeZipExtract:
     def _make_zip(self, tmp_path: Path, entries: dict[str, bytes]) -> Path:
         zip_path = tmp_path / "test.zip"
-        with zipfile.ZipFile(zip_path, 'w') as zf:
+        with zipfile.ZipFile(zip_path, "w") as zf:
             for name, content in entries.items():
                 zf.writestr(name, content)
         return zip_path
@@ -110,7 +110,7 @@ class TestSafeZipExtract:
 
     def test_rejects_path_traversal_zip(self, tmp_path: Path) -> None:
         zip_path = tmp_path / "evil.zip"
-        with zipfile.ZipFile(zip_path, 'w') as zf:
+        with zipfile.ZipFile(zip_path, "w") as zf:
             zf.writestr("../../evil.txt", b"gotcha")
         extract_dir = tmp_path / "out"
         extract_dir.mkdir()
@@ -121,7 +121,7 @@ class TestSafeZipExtract:
 class TestSafeTarExtract:
     def _make_tar(self, tmp_path: Path, entries: dict[str, bytes]) -> Path:
         tar_path = tmp_path / "test.tar.gz"
-        with tarfile.open(tar_path, 'w:gz') as tf:
+        with tarfile.open(tar_path, "w:gz") as tf:
             for name, content in entries.items():
                 info = tarfile.TarInfo(name=name)
                 info.size = len(content)
@@ -144,7 +144,7 @@ class TestSafeTarExtract:
 
     def test_rejects_symlink_tar(self, tmp_path: Path) -> None:
         tar_path = tmp_path / "symlink.tar.gz"
-        with tarfile.open(tar_path, 'w:gz') as tf:
+        with tarfile.open(tar_path, "w:gz") as tf:
             info = tarfile.TarInfo(name="link")
             info.type = tarfile.SYMTYPE
             info.linkname = "/etc/passwd"
@@ -169,7 +169,7 @@ class TestDownloadNpm:
         tarball_bytes = b"fake-tarball-content"
 
         def fake_urlopen(req, **kwargs):  # type: ignore[no-untyped-def]
-            url = req.full_url if hasattr(req, 'full_url') else req
+            url = req.full_url if hasattr(req, "full_url") else req
             resp = unittest.mock.MagicMock()
             if "express/4.18.0" in url:
                 resp.read.return_value = json.dumps(registry_meta).encode()
@@ -189,7 +189,11 @@ class TestDownloadNpm:
     def test_404_exits(self, tmp_path: Path) -> None:
         def fake_urlopen(req, **kwargs):  # type: ignore[no-untyped-def]
             raise urllib.error.HTTPError(
-                url="", code=404, msg="Not Found", hdrs=None, fp=None,  # type: ignore[arg-type]
+                url="",
+                code=404,
+                msg="Not Found",
+                hdrs=None,
+                fp=None,  # type: ignore[arg-type]
             )
 
         with (
@@ -222,7 +226,7 @@ class TestDownloadPyPI:
 
         def fake_urlopen(req, **kwargs):  # type: ignore[no-untyped-def]
             nonlocal downloaded_url
-            url = req.full_url if hasattr(req, 'full_url') else req
+            url = req.full_url if hasattr(req, "full_url") else req
             resp = unittest.mock.MagicMock()
             if "pypi.org" in url:
                 resp.read.return_value = json.dumps(registry_meta).encode()
@@ -255,7 +259,7 @@ class TestDownloadPyPI:
         sdist_bytes = b"fake-sdist-content"
 
         def fake_urlopen(req, **kwargs):  # type: ignore[no-untyped-def]
-            url = req.full_url if hasattr(req, 'full_url') else req
+            url = req.full_url if hasattr(req, "full_url") else req
             resp = unittest.mock.MagicMock()
             if "pypi.org" in url:
                 resp.read.return_value = json.dumps(registry_meta).encode()
@@ -292,14 +296,17 @@ class TestVetEndToEnd:
         from heckler.scanner import Scanner
 
         # JS file with planted Glassworm variation selectors
-        evil_js = 'const payload = `\uFE00\uFE01\uFE0F`;\n'.encode()
-        clean_js = b'module.exports = {};\n'
+        evil_js = "const payload = `\ufe00\ufe01\ufe0f`;\n".encode()
+        clean_js = b"module.exports = {};\n"
 
-        tgz = self._make_npm_tgz(tmp_path, {
-            "index.js": evil_js,
-            "util.js": clean_js,
-            "package.json": b'{"name": "evil-pkg", "version": "1.0.0"}',
-        })
+        tgz = self._make_npm_tgz(
+            tmp_path,
+            {
+                "index.js": evil_js,
+                "util.js": clean_js,
+                "package.json": b'{"name": "evil-pkg", "version": "1.0.0"}',
+            },
+        )
 
         # Extract
         extract_dir = extract_package(tgz, str(tmp_path))
@@ -319,10 +326,13 @@ class TestVetEndToEnd:
         """A clean package should produce zero findings."""
         from heckler.scanner import Scanner
 
-        tgz = self._make_npm_tgz(tmp_path, {
-            "index.js": b'module.exports = { add: (a, b) => a + b };\n',
-            "package.json": b'{"name": "clean-pkg", "version": "1.0.0"}',
-        })
+        tgz = self._make_npm_tgz(
+            tmp_path,
+            {
+                "index.js": b"module.exports = { add: (a, b) => a + b };\n",
+                "package.json": b'{"name": "clean-pkg", "version": "1.0.0"}',
+            },
+        )
 
         extract_dir = extract_package(tgz, str(tmp_path))
         scanner = Scanner(skip_dirs=frozenset(), scan_deps=True)
@@ -333,7 +343,7 @@ class TestVetEndToEnd:
         """Build a fake .whl (zip) with a planted bidi attack, extract, scan."""
         from heckler.scanner import Scanner
 
-        evil_py = 'access = "\u202Eadmin"\n'.encode()
+        evil_py = 'access = "\u202eadmin"\n'.encode()
         whl_path = tmp_path / "evil_pkg-1.0.0-py3-none-any.whl"
         with zipfile.ZipFile(whl_path, "w") as zf:
             zf.writestr("evil_pkg/__init__.py", evil_py)

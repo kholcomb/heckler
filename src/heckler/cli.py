@@ -17,8 +17,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="heckler",
         description=(
-            "Detect dangerous invisible Unicode characters"
-            " in source code and dependencies."
+            "Detect dangerous invisible Unicode characters in source code and dependencies."
         ),
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -33,8 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--vet",
         metavar="PACKAGE",
         help=(
-            "Download and scan a package before installing"
-            " (e.g., express@4.18.0, requests==2.31.0)"
+            "Download and scan a package before installing (e.g., express@4.18.0, requests==2.31.0)"
         ),
     )
 
@@ -44,7 +42,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Package registry for --vet (auto-detected if omitted)",
     )
     parser.add_argument(
-        "--format", "-f",
+        "--format",
+        "-f",
         choices=["text", "json", "sarif"],
         default="text",
         help="Output format (default: text)",
@@ -86,7 +85,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable colored output",
     )
     parser.add_argument(
-        "--quiet", "-q",
+        "--quiet",
+        "-q",
         action="store_true",
         help="Only output findings, no summary",
     )
@@ -153,6 +153,7 @@ def main(argv: list[str] | None = None) -> int:
 def _run_vet(args: argparse.Namespace, config: Config) -> int:
     """Run package vetting mode."""
     from .vet import vet_package
+
     return vet_package(
         spec=args.vet,
         registry_override=args.registry,

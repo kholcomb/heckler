@@ -92,8 +92,13 @@ class TestSarifFormatter:
     def test_sarif_severity_mapping(self) -> None:
         findings = [
             _make_finding(severity=Severity.CRITICAL),
-            _make_finding(severity=Severity.MEDIUM, codepoint=0x200B, codepoint_hex="U+200B",
-                         category=ThreatCategory.ZERO_WIDTH, char_name="ZWSP"),
+            _make_finding(
+                severity=Severity.MEDIUM,
+                codepoint=0x200B,
+                codepoint_hex="U+200B",
+                category=ThreatCategory.ZERO_WIDTH,
+                char_name="ZWSP",
+            ),
         ]
         output = format_sarif(findings)
         sarif = json.loads(output)

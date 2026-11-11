@@ -69,7 +69,7 @@ class TestDangerousUnicodeRegex:
 
     def test_common_unicode_does_not_match(self) -> None:
         # Common non-ASCII that should NOT trigger
-        for char in 'éèêëñüöäß中文日本語한국어':
+        for char in "éèêëñüöäß中文日本語한국어":
             assert not DANGEROUS_UNICODE_RE.search(char), f"'{char}' should not match"
 
 

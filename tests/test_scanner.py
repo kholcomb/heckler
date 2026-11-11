@@ -32,38 +32,38 @@ class TestScanText:
 
     def test_inline_ignore(self) -> None:
         scanner = Scanner()
-        text = 'const x = "\uFE01"; // heckler-ignore\n'
+        text = 'const x = "\ufe01"; // heckler-ignore\n'
         findings = scanner.scan_text(text)
         assert findings == []
 
     def test_bom_at_start_allowed(self) -> None:
         scanner = Scanner(allow_bom=True)
-        text = '\uFEFFconst x = 1;\n'
+        text = "\ufeffconst x = 1;\n"
         findings = scanner.scan_text(text)
         assert findings == []
 
     def test_bom_at_start_disallowed(self) -> None:
         scanner = Scanner(allow_bom=False)
-        text = '\uFEFFconst x = 1;\n'
+        text = "\ufeffconst x = 1;\n"
         findings = scanner.scan_text(text)
         assert len(findings) == 1
 
     def test_bom_not_at_start(self) -> None:
         scanner = Scanner()
-        text = 'const x = "\uFEFF";\n'
+        text = 'const x = "\ufeff";\n'
         findings = scanner.scan_text(text)
         assert len(findings) == 1
 
     def test_severity_threshold(self) -> None:
         scanner = Scanner(severity_threshold=Severity.HIGH)
         # LOW severity char (soft hyphen) should be filtered
-        text = 'const x = "test\u00ADword";\n'
+        text = 'const x = "test\u00adword";\n'
         findings = scanner.scan_text(text)
         assert findings == []
 
     def test_severity_threshold_passes_high(self) -> None:
         scanner = Scanner(severity_threshold=Severity.HIGH)
-        text = 'const x = "\u202E";\n'  # RLO = CRITICAL
+        text = 'const x = "\u202e";\n'  # RLO = CRITICAL
         findings = scanner.scan_text(text)
         assert len(findings) == 1
 
@@ -77,7 +77,7 @@ class TestScanText:
 
     def test_multiple_findings_per_line(self) -> None:
         scanner = Scanner()
-        text = '\u200B\u200C\u200D\n'
+        text = "\u200b\u200c\u200d\n"
         findings = scanner.scan_text(text)
         assert len(findings) == 3
 
@@ -115,9 +115,9 @@ class TestScanPath:
     def test_skip_dirs(self, tmp_path: Path) -> None:
         nm = tmp_path / "node_modules" / "evil"
         nm.mkdir(parents=True)
-        (nm / "index.js").write_text('\uFE01', encoding='utf-8')
+        (nm / "index.js").write_text("\ufe01", encoding="utf-8")
         # Also create a project file
-        (tmp_path / "app.js").write_text('clean', encoding='utf-8')
+        (tmp_path / "app.js").write_text("clean", encoding="utf-8")
 
         scanner = Scanner()
         findings = scanner.scan_path(tmp_path)
@@ -126,7 +126,7 @@ class TestScanPath:
     def test_scan_deps(self, tmp_path: Path) -> None:
         nm = tmp_path / "node_modules" / "evil"
         nm.mkdir(parents=True)
-        (nm / "index.js").write_text('\uFE01', encoding='utf-8')
+        (nm / "index.js").write_text("\ufe01", encoding="utf-8")
 
         scanner = Scanner(scan_deps=True)
         findings = scanner.scan_path(tmp_path)
@@ -138,7 +138,7 @@ class TestScanPath:
     def test_scan_deps_scoped_package(self, tmp_path: Path) -> None:
         nm = tmp_path / "node_modules" / "@scope" / "pkg"
         nm.mkdir(parents=True)
-        (nm / "index.js").write_text('\u202E', encoding='utf-8')
+        (nm / "index.js").write_text("\u202e", encoding="utf-8")
 
         scanner = Scanner(scan_deps=True)
         findings = scanner.scan_path(tmp_path)
@@ -146,8 +146,8 @@ class TestScanPath:
         assert dep_findings[0].package == "@scope/pkg"
 
     def test_exclude_patterns(self, tmp_path: Path) -> None:
-        (tmp_path / "include.js").write_text('\uFE01', encoding='utf-8')
-        (tmp_path / "exclude.po").write_text('\uFE01', encoding='utf-8')
+        (tmp_path / "include.js").write_text("\ufe01", encoding="utf-8")
+        (tmp_path / "exclude.po").write_text("\ufe01", encoding="utf-8")
 
         scanner = Scanner(exclude_patterns=["*.po"])
         findings = scanner.scan_path(tmp_path)
@@ -162,7 +162,7 @@ class TestAllowlist:
         # pre-commit hands heckler individual files rather than a directory.
         target = tmp_path / "locale" / "de" / "messages.js"
         target.parent.mkdir(parents=True)
-        target.write_text('\uFE01', encoding='utf-8')
+        target.write_text("\ufe01", encoding="utf-8")
 
         scanner = Scanner(exclude_patterns=["**/locale/**"])
         assert scanner.scan_path(target) == []
@@ -171,7 +171,7 @@ class TestAllowlist:
     def test_named_file_outside_allowlist_is_scanned(self, tmp_path: Path) -> None:
         target = tmp_path / "src" / "app.js"
         target.parent.mkdir(parents=True)
-        target.write_text('\uFE01', encoding='utf-8')
+        target.write_text("\ufe01", encoding="utf-8")
 
         scanner = Scanner(exclude_patterns=["**/locale/**"])
         assert len(scanner.scan_path(target)) == 1
@@ -179,41 +179,47 @@ class TestAllowlist:
     def test_walk_honours_recursive_pattern(self, tmp_path: Path) -> None:
         nested = tmp_path / "locale" / "de" / "LC_MESSAGES"
         nested.mkdir(parents=True)
-        (nested / "app.js").write_text('\uFE01', encoding='utf-8')
-        (tmp_path / "app.js").write_text('\uFE01', encoding='utf-8')
+        (nested / "app.js").write_text("\ufe01", encoding="utf-8")
+        (tmp_path / "app.js").write_text("\ufe01", encoding="utf-8")
 
         findings = Scanner(exclude_patterns=["**/locale/**"]).scan_path(tmp_path)
         assert len(findings) == 1
         assert "locale" not in findings[0].file
 
-    @pytest.mark.parametrize(("path", "pattern"), [
-        ("top.po", "**/*.po"),
-        ("a/b/c.po", "**/*.po"),
-        ("a/b/c.po", "*.po"),
-        ("locale/de/LC_MESSAGES/app.po", "**/locale/**"),
-        ("src/locale/app.po", "**/locale/**"),
-        ("/abs/repo/src/locale/de/app.po", "**/locale/**"),
-        ("locale/de/app.po", "locale/"),
-        ("testdata/b.js", "testdata/*"),
-        ("src/a/b/gen.js", "src/**/gen.js"),
-        ("src/gen.js", "src/**/gen.js"),
-        ("a\\b\\c.po", "**/*.po"),
-        ("docs/v1.md", "docs/v[0-9].md"),
-        ("/abs/repo/x.js", "/abs/repo/*.js"),
-    ])
+    @pytest.mark.parametrize(
+        ("path", "pattern"),
+        [
+            ("top.po", "**/*.po"),
+            ("a/b/c.po", "**/*.po"),
+            ("a/b/c.po", "*.po"),
+            ("locale/de/LC_MESSAGES/app.po", "**/locale/**"),
+            ("src/locale/app.po", "**/locale/**"),
+            ("/abs/repo/src/locale/de/app.po", "**/locale/**"),
+            ("locale/de/app.po", "locale/"),
+            ("testdata/b.js", "testdata/*"),
+            ("src/a/b/gen.js", "src/**/gen.js"),
+            ("src/gen.js", "src/**/gen.js"),
+            ("a\\b\\c.po", "**/*.po"),
+            ("docs/v1.md", "docs/v[0-9].md"),
+            ("/abs/repo/x.js", "/abs/repo/*.js"),
+        ],
+    )
     def test_glob_matches(self, path: str, pattern: str) -> None:
         assert _glob_match(path, pattern)
 
-    @pytest.mark.parametrize(("path", "pattern"), [
-        ("testdata/a/b.js", "testdata/*"),
-        ("src/app.po.js", "*.po"),
-        ("mylocale/app.po", "**/locale/**"),
-        ("locale", "**/locale/**"),
-        ("src/a/b.js", "src/*.js"),
-        ("docs/vx.md", "docs/v[0-9].md"),
-        ("docs/v1.md", "docs/v[!0-9].md"),
-        ("/abs/repo/sub/x.js", "/abs/repo/*.js"),
-        ("other/abs/repo/x.js", "/abs/repo/*.js"),
-    ])
+    @pytest.mark.parametrize(
+        ("path", "pattern"),
+        [
+            ("testdata/a/b.js", "testdata/*"),
+            ("src/app.po.js", "*.po"),
+            ("mylocale/app.po", "**/locale/**"),
+            ("locale", "**/locale/**"),
+            ("src/a/b.js", "src/*.js"),
+            ("docs/vx.md", "docs/v[0-9].md"),
+            ("docs/v1.md", "docs/v[!0-9].md"),
+            ("/abs/repo/sub/x.js", "/abs/repo/*.js"),
+            ("other/abs/repo/x.js", "/abs/repo/*.js"),
+        ],
+    )
     def test_glob_rejects(self, path: str, pattern: str) -> None:
         assert not _glob_match(path, pattern)

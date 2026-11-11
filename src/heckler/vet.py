@@ -40,15 +40,15 @@ def detect_registry(spec: str) -> str:
 
     Returns 'npm', 'pypi', or 'unknown'.
     """
-    if '==' in spec or '>=' in spec or '<=' in spec or '~=' in spec:
-        return 'pypi'
+    if "==" in spec or ">=" in spec or "<=" in spec or "~=" in spec:
+        return "pypi"
     # Scoped npm: @scope/name or @scope/name@version
-    if spec.startswith('@'):
-        return 'npm'
+    if spec.startswith("@"):
+        return "npm"
     # Unscoped npm with version: name@version
-    if '@' in spec:
-        return 'npm'
-    return 'unknown'
+    if "@" in spec:
+        return "npm"
+    return "unknown"
 
 
 def _parse_spec(spec: str, registry: str) -> tuple[str, str | None]:
@@ -58,31 +58,31 @@ def _parse_spec(spec: str, registry: str) -> tuple[str, str | None]:
     specifiers (``>=``, ``~=``, etc.) cause a hard exit because the
     registry JSON API has no solver.
     """
-    if registry == 'npm':
-        if spec.startswith('@'):
+    if registry == "npm":
+        if spec.startswith("@"):
             # Scoped: @scope/name@version — split on the *last* @
             rest = spec[1:]
-            if '@' in rest:
-                idx = rest.rindex('@')
-                return '@' + rest[:idx], rest[idx + 1:] or None
+            if "@" in rest:
+                idx = rest.rindex("@")
+                return "@" + rest[:idx], rest[idx + 1 :] or None
             return spec, None
-        if '@' in spec:
-            idx = spec.index('@')
-            return spec[:idx], spec[idx + 1:] or None
+        if "@" in spec:
+            idx = spec.index("@")
+            return spec[:idx], spec[idx + 1 :] or None
         return spec, None
 
     # PyPI
-    for op in ('>=', '<=', '~=', '!='):
+    for op in (">=", "<=", "~=", "!="):
         if op in spec:
             base = spec.split(op)[0].strip()
             print(
-                f'Error: --vet requires an exact version (e.g., {base}==X.Y.Z). '
-                f'Version ranges are not supported with direct registry fetching.',
+                f"Error: --vet requires an exact version (e.g., {base}==X.Y.Z). "
+                f"Version ranges are not supported with direct registry fetching.",
                 file=sys.stderr,
             )
             sys.exit(2)
-    if '==' in spec:
-        name, version = spec.split('==', 1)
+    if "==" in spec:
+        name, version = spec.split("==", 1)
         return name.strip(), version.strip()
     return spec.strip(), None
 
@@ -108,7 +108,7 @@ def _download_file(url: str, dest: Path) -> None:
     req = urllib.request.Request(url)
     with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310
         total = 0
-        with open(dest, 'wb') as f:
+        with open(dest, "wb") as f:
             while True:
                 chunk = resp.read(8192)
                 if not chunk:
@@ -127,8 +127,8 @@ def _download_file(url: str, dest: Path) -> None:
 def _verify_checksum(path: Path, algorithm: str, expected: str, label: str) -> None:
     """Verify a downloaded file's checksum. Exits on mismatch."""
     h = hashlib.new(algorithm)
-    with open(path, 'rb') as f:
-        for chunk in iter(lambda: f.read(8192), b''):
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     actual = h.hexdigest()
     if actual != expected:
@@ -145,10 +145,11 @@ def _verify_checksum(path: Path, algorithm: str, expected: str, label: str) -> N
 # npm
 # ---------------------------------------------------------------------------
 
+
 def _download_npm(name: str, version: str | None, tmpdir: str) -> Path:
     """Fetch an npm tarball directly from the public registry."""
-    encoded = urllib.parse.quote(name, safe='@')
-    tag = version if version else 'latest'
+    encoded = urllib.parse.quote(name, safe="@")
+    tag = version if version else "latest"
     url = f"{_NPM_REGISTRY}/{encoded}/{tag}"
 
     try:
@@ -171,7 +172,7 @@ def _download_npm(name: str, version: str | None, tmpdir: str) -> Path:
     # Extract expected checksum from registry metadata
     expected_shasum = dist.get("shasum") if isinstance(dist, dict) else None
 
-    filename: str = tarball_url.rsplit('/', 1)[-1]
+    filename: str = tarball_url.rsplit("/", 1)[-1]
     dest: Path = Path(tmpdir) / filename
 
     try:
@@ -190,12 +191,13 @@ def _download_npm(name: str, version: str | None, tmpdir: str) -> Path:
 # PyPI
 # ---------------------------------------------------------------------------
 
+
 def _download_pypi(name: str, version: str | None, tmpdir: str) -> Path:
     """Fetch a PyPI package directly from the public registry.
 
     Prefers wheels (no code execution) over sdists.
     """
-    encoded = urllib.parse.quote(name, safe='')
+    encoded = urllib.parse.quote(name, safe="")
     if version:
         url = f"{_PYPI_REGISTRY}/pypi/{encoded}/{version}/json"
     else:
@@ -254,6 +256,7 @@ def _download_pypi(name: str, version: str | None, tmpdir: str) -> Path:
 # Public download entry point
 # ---------------------------------------------------------------------------
 
+
 def download_package(spec: str, registry: str, tmpdir: str) -> Path:
     """Download a package archive to *tmpdir* via registry API.
 
@@ -261,7 +264,7 @@ def download_package(spec: str, registry: str, tmpdir: str) -> Path:
     """
     name, version = _parse_spec(spec, registry)
 
-    if registry == 'npm':
+    if registry == "npm":
         return _download_npm(name, version, tmpdir)
     return _download_pypi(name, version, tmpdir)
 
@@ -270,18 +273,19 @@ def download_package(spec: str, registry: str, tmpdir: str) -> Path:
 # Archive extraction (unchanged)
 # ---------------------------------------------------------------------------
 
+
 def extract_package(archive_path: Path, tmpdir: str) -> Path:
     """Extract a package archive safely. Guards against path traversal,
     symlink attacks, and zip bombs."""
-    extract_dir = Path(tmpdir) / 'extracted'
+    extract_dir = Path(tmpdir) / "extracted"
     extract_dir.mkdir(exist_ok=True)
     resolved_root = extract_dir.resolve()
 
     name = archive_path.name.lower()
     try:
-        if name.endswith(('.tgz', '.tar.gz', '.tar.bz2', '.tar')):
+        if name.endswith((".tgz", ".tar.gz", ".tar.bz2", ".tar")):
             _safe_tar_extract(archive_path, extract_dir, resolved_root)
-        elif name.endswith(('.whl', '.zip')):
+        elif name.endswith((".whl", ".zip")):
             _safe_zip_extract(archive_path, extract_dir, resolved_root)
         else:
             raise _UnsafeArchiveError(f"Unsupported archive type: {archive_path.name}")
@@ -308,7 +312,7 @@ def _safe_tar_extract(archive_path: Path, extract_dir: Path, resolved_root: Path
         # Python 3.12+ has filter='data' which handles this natively.
         # For 3.9-3.11, we validate manually.
         try:
-            tf.extractall(extract_dir, filter='data')
+            tf.extractall(extract_dir, filter="data")
             return
         except TypeError:
             # filter parameter not supported (Python < 3.12)
@@ -325,22 +329,14 @@ def _safe_tar_extract(archive_path: Path, extract_dir: Path, resolved_root: Path
             _validate_archive_member(member.name, resolved_root, extract_dir)
 
             if member.issym() or member.islnk():
-                raise _UnsafeArchiveError(
-                    f"Archive contains symlink/hardlink: {member.name}"
-                )
+                raise _UnsafeArchiveError(f"Archive contains symlink/hardlink: {member.name}")
             if member.isdev():
-                raise _UnsafeArchiveError(
-                    f"Archive contains device file: {member.name}"
-                )
+                raise _UnsafeArchiveError(f"Archive contains device file: {member.name}")
             if member.size > _MAX_EXTRACT_SIZE:
-                raise _UnsafeArchiveError(
-                    f"File too large ({member.size} bytes): {member.name}"
-                )
+                raise _UnsafeArchiveError(f"File too large ({member.size} bytes): {member.name}")
             total_size += member.size
             if total_size > _MAX_TOTAL_SIZE:
-                raise _UnsafeArchiveError(
-                    f"Total extraction size exceeds {_MAX_TOTAL_SIZE} bytes"
-                )
+                raise _UnsafeArchiveError(f"Total extraction size exceeds {_MAX_TOTAL_SIZE} bytes")
 
         # Safe to extract — reuse validated member list
         safe_members = [m for m in members if m.isfile() or m.isdir()]
@@ -349,7 +345,7 @@ def _safe_tar_extract(archive_path: Path, extract_dir: Path, resolved_root: Path
 
 def _safe_zip_extract(archive_path: Path, extract_dir: Path, resolved_root: Path) -> None:
     """Extract a zip archive with path traversal protection."""
-    with zipfile.ZipFile(archive_path, 'r') as zf:
+    with zipfile.ZipFile(archive_path, "r") as zf:
         total_size = 0
         for info in zf.infolist():
             _validate_archive_member(info.filename, resolved_root, extract_dir)
@@ -360,16 +356,12 @@ def _safe_zip_extract(archive_path: Path, extract_dir: Path, resolved_root: Path
                 )
             total_size += info.file_size
             if total_size > _MAX_TOTAL_SIZE:
-                raise _UnsafeArchiveError(
-                    f"Total extraction size exceeds {_MAX_TOTAL_SIZE} bytes"
-                )
+                raise _UnsafeArchiveError(f"Total extraction size exceeds {_MAX_TOTAL_SIZE} bytes")
 
             # Check for symlinks in zip (external_attr encodes Unix mode)
             unix_mode = info.external_attr >> 16
             if unix_mode and (unix_mode & 0o120000) == 0o120000:
-                raise _UnsafeArchiveError(
-                    f"Archive contains symlink: {info.filename}"
-                )
+                raise _UnsafeArchiveError(f"Archive contains symlink: {info.filename}")
 
         # All entries validated — extract individually (avoid unfiltered extractall)
         for info in zf.infolist():
@@ -379,21 +371,18 @@ def _safe_zip_extract(archive_path: Path, extract_dir: Path, resolved_root: Path
 def _validate_archive_member(member_name: str, resolved_root: Path, extract_dir: Path) -> None:
     """Reject archive members that would escape the extraction directory."""
     # Normalize and check for path traversal
-    if '..' in member_name.split('/') or '..' in member_name.split('\\'):
-        raise _UnsafeArchiveError(
-            f"Path traversal detected: {member_name}"
-        )
+    if ".." in member_name.split("/") or ".." in member_name.split("\\"):
+        raise _UnsafeArchiveError(f"Path traversal detected: {member_name}")
     # Resolve the target path and verify it's under the extraction root
     target = (extract_dir / member_name).resolve()
     if not target.is_relative_to(resolved_root):
-        raise _UnsafeArchiveError(
-            f"Path escapes extraction directory: {member_name}"
-        )
+        raise _UnsafeArchiveError(f"Path escapes extraction directory: {member_name}")
 
 
 # ---------------------------------------------------------------------------
 # Top-level vet entry point
 # ---------------------------------------------------------------------------
+
 
 def vet_package(
     spec: str,
@@ -405,9 +394,9 @@ def vet_package(
 ) -> int:
     """Download, scan, and report on a package. Returns exit code."""
     registry = registry_override or detect_registry(spec)
-    if registry == 'unknown':
+    if registry == "unknown":
         print(
-            f"Error: Cannot determine registry for \"{spec}\". "
+            f'Error: Cannot determine registry for "{spec}". '
             f"Use --registry npm or --registry pypi.",
             file=sys.stderr,
         )
@@ -416,7 +405,7 @@ def vet_package(
     # Warn about public-only registry support
     print(_PRIVATE_REGISTRY_WARNING, file=sys.stderr)
 
-    with tempfile.TemporaryDirectory(prefix='heckler-vet-') as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="heckler-vet-") as tmpdir:
         archive = download_package(spec, registry, tmpdir)
         extract_dir = extract_package(archive, tmpdir)
 
@@ -448,7 +437,7 @@ def vet_package(
             for f in findings:
                 sev = f.severity.value.upper()
                 counts[sev] = counts.get(sev, 0) + 1
-            count_str = ', '.join(f"{v} {k}" for k, v in counts.items())
+            count_str = ", ".join(f"{v} {k}" for k, v in counts.items())
             header = (
                 f"[VET] {spec} ({registry}) — {len(findings)} finding(s)"
                 f" ({count_str}). DO NOT INSTALL."

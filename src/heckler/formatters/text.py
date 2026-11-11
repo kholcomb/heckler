@@ -13,14 +13,15 @@ from ..characters import Severity
 
 def _sanitize_annotation_value(value: str) -> str:
     """Escape characters that have special meaning in GitHub Actions annotations."""
-    return value.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A').replace(',', '%2C')
+    return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A").replace(",", "%2C")
+
 
 _SEVERITY_COLORS = {
     Severity.CRITICAL: "\033[91m",  # Red
-    Severity.HIGH: "\033[93m",      # Yellow
-    Severity.MEDIUM: "\033[96m",    # Cyan
-    Severity.LOW: "\033[37m",       # White
-    Severity.INFO: "\033[90m",      # Gray
+    Severity.HIGH: "\033[93m",  # Yellow
+    Severity.MEDIUM: "\033[96m",  # Cyan
+    Severity.LOW: "\033[37m",  # White
+    Severity.INFO: "\033[90m",  # Gray
 }
 _RESET = "\033[0m"
 _BOLD = "\033[1m"
@@ -117,4 +118,5 @@ def _supports_color() -> bool:
     if os.environ.get("FORCE_COLOR"):
         return True
     import sys
-    return hasattr(sys.stdout, 'isatty') and sys.stdout.isatty()
+
+    return hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
