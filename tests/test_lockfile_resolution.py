@@ -370,9 +370,10 @@ class TestDiffOnlyExitCodes:
     ) -> None:
         _stage_npm_bump(repo)
         assert main(["--ci", *self.ARGS]) == 2
-        err = capsys.readouterr().err
-        assert "express 4.18.2 changed in package-lock.json" in err
-        assert "--allow-unscanned" in err
+        captured = capsys.readouterr()
+        assert "express 4.18.2 changed in package-lock.json" in captured.err
+        assert "--allow-unscanned" in captured.err
+        assert "No dangerous" not in captured.out
 
     def test_allow_unscanned_passes(self, repo: Path) -> None:
         _stage_npm_bump(repo)
@@ -387,10 +388,20 @@ class TestDiffOnlyExitCodes:
         _stage_npm_bump(repo)
         assert main(["--ci", *self.ARGS]) == 1
 
-    def test_clean_scanned_package_passes(self, repo: Path) -> None:
+    def test_clean_scanned_package_passes(
+        self, repo: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         node_package(repo, "node_modules/express", "4.18.2")
         _stage_npm_bump(repo)
         assert main(["--ci", *self.ARGS]) == 0
+        assert "No dangerous" in capsys.readouterr().out
+
+    def test_json_output_is_still_emitted_when_nothing_was_scanned(
+        self, repo: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _stage_npm_bump(repo)
+        assert main(["--ci", "--format", "json", *self.ARGS]) == 2
+        assert json.loads(capsys.readouterr().out) == []
 
     def test_unchanged_lockfile_passes(self, repo: Path) -> None:
         assert main(["--ci", *self.ARGS]) == 0

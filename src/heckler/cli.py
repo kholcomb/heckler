@@ -194,7 +194,10 @@ def _run_diff_only(args: argparse.Namespace, config: Config) -> int:
     formatter = get_formatter(args.format)
     color = not args.no_color and args.format == "text"
     output = formatter(findings, color=color, quiet=args.quiet)
-    if output:
+    # "Nothing found" would be the wrong thing to say about packages that
+    # were never looked at; the warnings already tell that story.
+    nothing_was_checked = args.format == "text" and unscanned and not findings
+    if output and not nothing_was_checked:
         print(output)
 
     if args.ci and findings:
