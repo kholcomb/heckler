@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -205,6 +206,11 @@ def _parse_suppressed_codepoints(directive_match: re.Match[str]) -> frozenset[in
 
 _BINARY_CHECK_SIZE = 8192
 
+# Nobody reads this many findings for one file. Stopping here keeps a binary
+# that carries a source extension, where control bytes are everywhere, from
+# turning into millions of findings.
+_MAX_FINDINGS_PER_FILE = 10_000
+
 # Maximum file size to scan (50 MB). Files larger than this are skipped to
 # prevent memory exhaustion from adversarially large inputs.
 _MAX_SCAN_FILE_SIZE = 50 * 1024 * 1024
@@ -251,6 +257,7 @@ class Scanner:
         # None means "suppress all", a frozenset means "suppress only these".
         _NO_SUPPRESS: frozenset[int] = frozenset()
         next_line_suppress: frozenset[int] | None = _NO_SUPPRESS
+        nul_seen = False
 
         for line_num, line in enumerate(lines, 1):
             # Determine suppression for this line
@@ -276,6 +283,11 @@ class Scanner:
                 # BOM at file start is typically legitimate
                 if cp == 0xFEFF and line_num == 1 and match.start() == 0 and self.allow_bom:
                     continue
+                if cp == 0:
+                    # One finding says it: this file holds NUL bytes.
+                    if nul_seen:
+                        continue
+                    nul_seen = True
                 # Check suppression: None = all, non-empty frozenset = specific
                 if suppress is None or cp in suppress:
                     continue
@@ -297,6 +309,13 @@ class Scanner:
                             package=package,
                         )
                     )
+                    if len(findings) >= _MAX_FINDINGS_PER_FILE:
+                        print(
+                            f"Warning: {filename}: stopped after {_MAX_FINDINGS_PER_FILE}"
+                            " findings; the rest of the file was not scanned.",
+                            file=sys.stderr,
+                        )
+                        return findings
         return findings
 
     def scan_file(self, filepath: Path) -> list[Finding]:

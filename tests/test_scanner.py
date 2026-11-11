@@ -89,10 +89,10 @@ class TestScanFile:
         assert len(findings) == 3
         assert all(f.severity == Severity.CRITICAL for f in findings)
 
-    def test_skip_binary_file(self, tmp_scan_dir: Path) -> None:
+    def test_control_bytes_in_a_source_file_are_reported(self, tmp_scan_dir: Path) -> None:
         scanner = Scanner()
         findings = scanner.scan_file(tmp_scan_dir / "binary.js")
-        assert findings == []
+        assert [f.codepoint for f in findings] == [0x00, 0x01, 0x02, 0x03]
 
     def test_clean_file(self, tmp_scan_dir: Path) -> None:
         scanner = Scanner()
@@ -107,10 +107,10 @@ class TestScanPath:
         # Should find chars in glassworm.js, glassworm_supp.js, trojan_source.py,
         # zero_width.ts, tag_chars.js, invisible_format.ts, ignored.js (line 2 only)
         assert len(findings) > 10
-        # Should NOT find in clean.js or binary.js
+        # Should NOT find in clean.js
         files_with_findings = {f.file for f in findings}
         assert not any("clean.js" in f for f in files_with_findings)
-        assert not any("binary.js" in f for f in files_with_findings)
+        assert any("binary.js" in f for f in files_with_findings)
 
     def test_skip_dirs(self, tmp_path: Path) -> None:
         nm = tmp_path / "node_modules" / "evil"

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Detection of every default-ignorable code point, including the unassigned ones in U+E0000-E0FFF and U+FFF0-FFF8, which render as nothing
+- Detection of control characters other than tab, LF and CR, as a new `control_character` category
+- Detection of U+180F, U+1BCA0-1BCA3, U+1D173-1D17A and the blank glyphs U+13441-13442, U+16FE4 and U+1D159
 - `--diff-only` parses pnpm lockfile v9 and `Pipfile.lock`
 - `--diff-only` finds Python packages in the project's virtualenv, or through `PATH`, when heckler runs in its own environment under pre-commit, and resolves them by distribution name rather than import name
 - `--diff-only` uses the commit range pre-commit is checking when nothing is staged
@@ -17,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A file with a source extension that contains NUL or other control bytes is reported instead of being treated as binary
+- A NUL byte is reported once per file, and scanning a file stops after 10,000 findings
 - `--diff-only --ci` exits with code 2 when a changed package is not installed, or is installed at a different version than the lockfile names, instead of passing with a warning
 - The `heckler-lockfile` pre-commit hook only triggers on lockfiles heckler can parse
 - Variation selectors and zero width joiners inside well-formed emoji are reported at INFO instead of CRITICAL and MEDIUM; set `allow_emoji: false` to flag every occurrence as before

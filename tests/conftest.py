@@ -78,7 +78,7 @@ def tmp_scan_dir(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
 
-    # Binary file (should be skipped)
+    # Control bytes in a file named like source (reported, not skipped)
     binary = tmp_path / "binary.js"
     binary.write_bytes(b"\x00\x01\x02\x03binary content")
 

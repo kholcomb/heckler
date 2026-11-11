@@ -265,14 +265,12 @@ class TestNullByteHardening:
 
         scanner = Scanner()
         findings = scanner.scan_file(f)
-        assert len(findings) == 1
-        assert findings[0].codepoint == 0xFE01
+        assert [x.codepoint for x in findings] == [0xFE01, 0x00]
 
-    def test_binary_content_without_dangerous_chars_is_clean(self, tmp_path: Path) -> None:
+    def test_control_bytes_in_a_source_file_are_reported(self, tmp_path: Path) -> None:
         f = tmp_path / "binary.js"
         f.write_bytes(b"\x00\x01\x02")
-        scanner = Scanner()
-        assert scanner.scan_file(f) == []
+        assert [x.codepoint for x in Scanner().scan_file(f)] == [0x00, 0x01, 0x02]
 
     def test_null_before_dangerous_chars_does_not_hide_them(self, tmp_path: Path) -> None:
         """A NUL in a comment on line 1 must not stop the scan."""
@@ -280,8 +278,12 @@ class TestNullByteHardening:
         f.write_bytes(b"//\x00\n" + "const p = `\ufe01\ufe02\ufe03`;\n".encode())
 
         findings = Scanner().scan_file(f)
-        assert [x.codepoint for x in findings] == [0xFE01, 0xFE02, 0xFE03]
-        assert all(x.line == 2 for x in findings)
+        assert [(x.line, x.codepoint) for x in findings] == [
+            (1, 0x00),
+            (2, 0xFE01),
+            (2, 0xFE02),
+            (2, 0xFE03),
+        ]
 
     def test_leading_null_does_not_hide_the_file(self, tmp_path: Path) -> None:
         """PHP emits anything before its opening tag, so a file can start with NUL."""
@@ -289,14 +291,15 @@ class TestNullByteHardening:
         f.write_bytes(b"\x00\x00<?php\n" + '$p = "\u202e";\n'.encode())
 
         findings = Scanner().scan_file(f)
-        assert [x.codepoint for x in findings] == [0x202E]
+        # Two NUL bytes, one finding: NUL is reported once per file.
+        assert [x.codepoint for x in findings] == [0x00, 0x202E]
 
     def test_null_does_not_hide_chars_in_directory_walk(self, tmp_path: Path) -> None:
         (tmp_path / "hidden.js").write_bytes(
             b"//\x00\n" + "const p = `\ufe01`;\n".encode(),
         )
-        assert len(Scanner().scan_path(tmp_path)) == 1
-        assert len(Scanner(text_extensions=None).scan_path(tmp_path)) == 1
+        assert len(Scanner().scan_path(tmp_path)) == 2
+        assert len(Scanner(text_extensions=None).scan_path(tmp_path)) == 2
 
     def test_null_byte_midfile_scans_prefix(self, tmp_path: Path) -> None:
         """Dangerous chars in the text portion before null should be found."""
@@ -305,7 +308,7 @@ class TestNullByteHardening:
         f.write_bytes(evil + b"\x00" + b"binary tail")
         scanner = Scanner()
         findings = scanner.scan_file(f)
-        assert len(findings) == 2
+        assert [x.codepoint for x in findings] == [0x200B, 0x202E, 0x00]
 
 
 class TestAllTextBinaryFilter:
@@ -328,7 +331,7 @@ class TestAllTextBinaryFilter:
 
     def test_known_filename_with_null_is_scanned(self, tmp_path: Path) -> None:
         (tmp_path / "Makefile").write_bytes(b"#\x00\n" + "x = \u202e\n".encode())
-        assert len(Scanner(text_extensions=None).scan_path(tmp_path)) == 1
+        assert len(Scanner(text_extensions=None).scan_path(tmp_path)) == 2
 
 
 # ---------------------------------------------------------------------------

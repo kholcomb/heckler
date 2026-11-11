@@ -2,6 +2,12 @@
 
 Covers: Glassworm (Variation Selectors), Trojan Source (bidi controls),
 zero-width characters, tag characters, invisible operators, and more.
+
+The detection set is every code point with the Unicode property
+Default_Ignorable_Code_Point (renderers draw nothing for these, including
+the ones that are still unassigned), every space and line separator other
+than the ordinary space, the control characters other than TAB, LF and CR,
+and a handful of glyphs that are defined to be blank.
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ class ThreatCategory(enum.Enum):
     TAG_CHARACTER = "tag_character"
     INVISIBLE_FORMAT = "invisible_format"
     INVISIBLE_IDENTIFIER = "invisible_identifier"
+    CONTROL_CHARACTER = "control_character"
 
 
 class Severity(enum.Enum):
@@ -166,11 +173,73 @@ CHAR_DB: dict[int, CharInfo] = {
     0x202F: CharInfo("Narrow No-Break Space", ThreatCategory.INVISIBLE_FORMAT, Severity.LOW),
     0x205F: CharInfo("Medium Mathematical Space", ThreatCategory.INVISIBLE_FORMAT, Severity.LOW),
     0x3000: CharInfo("Ideographic Space", ThreatCategory.INVISIBLE_FORMAT, Severity.LOW),
+    # Control characters. Escape starts terminal sequences that can hide or
+    # rewrite what a terminal shows; Backspace and Delete can erase it. A NUL
+    # makes git and review tools treat the file as binary and hide its diff;
+    # the scanner reports it once per file. Form Feed is a page break in a
+    # lot of C, Python and Emacs Lisp source, so it is only listed at INFO.
+    # The remaining controls are named in get_char_info().
+    0x0000: CharInfo("Null", ThreatCategory.CONTROL_CHARACTER, Severity.MEDIUM),
+    0x0008: CharInfo("Backspace", ThreatCategory.CONTROL_CHARACTER, Severity.MEDIUM),
+    0x000B: CharInfo("Line Tabulation", ThreatCategory.CONTROL_CHARACTER, Severity.LOW),
+    0x000C: CharInfo("Form Feed", ThreatCategory.CONTROL_CHARACTER, Severity.INFO),
+    0x001B: CharInfo("Escape", ThreatCategory.CONTROL_CHARACTER, Severity.HIGH),
+    0x007F: CharInfo("Delete", ThreatCategory.CONTROL_CHARACTER, Severity.MEDIUM),
+    0x0085: CharInfo("Next Line", ThreatCategory.CONTROL_CHARACTER, Severity.MEDIUM),
+    0x180F: CharInfo(
+        "Mongolian Free Variation Selector Four",
+        ThreatCategory.VARIATION_SELECTOR, Severity.HIGH,
+    ),
+    # Invisible format controls outside the BMP
+    0x1BCA0: CharInfo(
+        "Shorthand Format Letter Overlap", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM,
+    ),
+    0x1BCA1: CharInfo(
+        "Shorthand Format Continuing Overlap", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM,
+    ),
+    0x1BCA2: CharInfo(
+        "Shorthand Format Down Step", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM,
+    ),
+    0x1BCA3: CharInfo("Shorthand Format Up Step", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
+    0x1D173: CharInfo(
+        "Musical Symbol Begin Beam", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM,
+    ),
+    0x1D174: CharInfo("Musical Symbol End Beam", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
+    0x1D175: CharInfo("Musical Symbol Begin Tie", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
+    0x1D176: CharInfo("Musical Symbol End Tie", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
+    0x1D177: CharInfo(
+        "Musical Symbol Begin Slur", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM,
+    ),
+    0x1D178: CharInfo("Musical Symbol End Slur", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM),
+    0x1D179: CharInfo(
+        "Musical Symbol Begin Phrase", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM,
+    ),
+    0x1D17A: CharInfo(
+        "Musical Symbol End Phrase", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM,
+    ),
+    # Glyphs that are defined to be blank. The first three are letters or
+    # marks, so they can appear in identifiers.
+    0x13441: CharInfo(
+        "Egyptian Hieroglyph Full Blank", ThreatCategory.INVISIBLE_IDENTIFIER, Severity.MEDIUM,
+    ),
+    0x13442: CharInfo(
+        "Egyptian Hieroglyph Half Blank", ThreatCategory.INVISIBLE_IDENTIFIER, Severity.MEDIUM,
+    ),
+    0x16FE4: CharInfo(
+        "Khitan Small Script Filler", ThreatCategory.INVISIBLE_IDENTIFIER, Severity.MEDIUM,
+    ),
+    0x1D159: CharInfo(
+        "Musical Symbol Null Notehead", ThreatCategory.INVISIBLE_FORMAT, Severity.LOW,
+    ),
 }
 
 # Compiled regex covering all dangerous codepoint ranges
 DANGEROUS_UNICODE_RE = re.compile(
     r'['
+    r'\x00-\x08'        # C0 controls before TAB
+    r'\x0B\x0C'         # Line Tabulation, Form Feed
+    r'\x0E-\x1F'        # C0 controls after CR, including Escape
+    r'\x7F-\x9F'        # Delete and the C1 controls
     r'\u00A0'           # No-Break Space
     r'\u00AD'           # Soft Hyphen
     r'\u034F'           # Combining Grapheme Joiner
@@ -178,7 +247,7 @@ DANGEROUS_UNICODE_RE = re.compile(
     r'\u115F-\u1160'    # Hangul Choseong/Jungseong Fillers
     r'\u1680'           # Ogham Space Mark
     r'\u17B4-\u17B5'    # Khmer Vowel Inherent
-    r'\u180B-\u180E'    # Mongolian Free Variation Selectors + Vowel Separator
+    r'\u180B-\u180F'    # Mongolian Free Variation Selectors 1-4 + Vowel Separator
     r'\u2000-\u200F'    # Typographic spaces + ZWSP/ZWNJ/ZWJ/LRM/RLM
     r'\u2028-\u202F'    # Line/Para seps + Bidi embeddings/overrides + NNBSP
     r'\u205F'           # Medium Mathematical Space
@@ -189,10 +258,15 @@ DANGEROUS_UNICODE_RE = re.compile(
     r'\uFE00-\uFE0F'   # Variation Selectors 1-16 (Glassworm primary)
     r'\uFEFF'           # BOM / ZWNBSP
     r'\uFFA0'           # Halfwidth Hangul Filler
-    r'\uFFF9-\uFFFC'    # Interlinear Annotation + Object Replacement
+    r'\uFFF0-\uFFFC'    # Reserved default-ignorables, Interlinear Annotation, Object Replacement
     r']'
-    r'|[\U000E0001\U000E0020-\U000E007F]'  # Tag characters
-    r'|[\U000E0100-\U000E01EF]'            # Variation Selectors Supplement (Glassworm secondary)
+    r'|[\U00013441\U00013442\U00016FE4]'    # Egyptian Hieroglyph blanks, Khitan filler
+    r'|[\U0001BCA0-\U0001BCA3]'            # Shorthand format controls
+    r'|[\U0001D159\U0001D173-\U0001D17A]'  # Musical null notehead and format controls
+    # The whole default-ignorable block of plane 14: the tag characters, the
+    # Variation Selectors Supplement (Glassworm secondary), and the reserved
+    # code points around them, which are just as invisible.
+    r'|[\U000E0000-\U000E0FFF]'
 )
 # fmt: on
 
@@ -221,6 +295,16 @@ def get_char_info(cp: int) -> CharInfo:
             f"Tag {chr(ascii_val)!r}" if 0x21 <= ascii_val <= 0x7E else "Tag Space",
             ThreatCategory.TAG_CHARACTER,
             Severity.HIGH,
+        )
+    if cp < 0x20 or 0x7F <= cp <= 0x9F:
+        return CharInfo(
+            f"Control Character U+{cp:04X}", ThreatCategory.CONTROL_CHARACTER, Severity.MEDIUM
+        )
+    if cp == 0x2065 or 0xFFF0 <= cp <= 0xFFF8 or 0xE0000 <= cp <= 0xE0FFF:
+        # Not assigned to any character, yet renderers are told to draw
+        # nothing for them. Nothing legitimate puts one in a source file.
+        return CharInfo(
+            "Reserved Default Ignorable Code Point", ThreatCategory.INVISIBLE_FORMAT, Severity.HIGH
         )
     return CharInfo(f"Unknown U+{cp:04X}", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM)
 
@@ -264,7 +348,9 @@ def _is_emoji_base(ch: str) -> bool:
 
 def _is_variation_selector(ch: str) -> bool:
     cp = ord(ch)
-    return 0xFE00 <= cp <= 0xFE0F or 0xE0100 <= cp <= 0xE01EF or 0x180B <= cp <= 0x180D
+    return (
+        0xFE00 <= cp <= 0xFE0F or 0xE0100 <= cp <= 0xE01EF or 0x180B <= cp <= 0x180D or cp == 0x180F
+    )
 
 
 def is_emoji_context(text: str, index: int) -> bool:

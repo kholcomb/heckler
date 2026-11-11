@@ -10,7 +10,7 @@
 
 # Heckler
 
-Zero-dependency Python tool that detects dangerous invisible Unicode characters in source code and dependencies. Language-agnostic source scanning covers 60+ file extensions and well-known extensionless files (Makefile, Dockerfile, etc.) across all major ecosystems. Provides coverage on 416 codepoints across 6 threat categories including Glassworm supply chain attacks (Variation Selectors), Trojan Source (bidi controls, CVE-2021-42574), zero-width steganography, tag character injection, and exotic whitespace.
+Zero-dependency Python tool that detects dangerous invisible Unicode characters in source code and dependencies. Language-agnostic source scanning covers 60+ file extensions and well-known extensionless files (Makefile, Dockerfile, etc.) across all major ecosystems. Provides coverage on 4,263 codepoints across 7 threat categories including Glassworm supply chain attacks (Variation Selectors), Trojan Source (bidi controls, CVE-2021-42574), zero-width steganography, tag character injection, control characters, and exotic whitespace.
 
 ## Install
 
@@ -69,14 +69,18 @@ In the text report, the findings on a source line are followed by that line with
 
 | Category | Codepoints | Severity | Example |
 |---|---|---|---|
-| Variation Selectors (Glassworm) | U+FE00-FE0F, U+E0100-E01EF, U+180B-180D | CRITICAL/HIGH | Invisible payload encoding |
+| Variation Selectors (Glassworm) | U+FE00-FE0F, U+E0100-E01EF, U+180B-180D, U+180F | CRITICAL/HIGH | Invisible payload encoding |
 | Bidi controls (Trojan Source) | U+202A-202E, U+2066-2069, U+2028-2029, U+200E-200F, U+061C | CRITICAL/HIGH | Code displays differently than it executes |
 | Tag characters | U+E0001, U+E0020-E007F | HIGH | Invisible ASCII mirror used in prompt injection |
+| Reserved invisible code points | Rest of U+E0000-E0FFF, U+FFF0-FFF8, U+2065 | HIGH | Unassigned, but rendered as nothing, so usable as a hidden alphabet |
+| Control characters | U+0000-001F except tab, LF and CR; U+007F-009F | INFO-HIGH | Escape sequences that rewrite terminal output; a NUL that makes review tools hide a diff |
 | Zero-width characters | U+200B-200D, U+FEFF, U+2060 | MEDIUM | Steganographic encoding, string comparison bypass |
-| Invisible identifiers | U+3164, U+FFA0, U+2800, U+115F-1160 | MEDIUM | Invisible variable/function names |
-| Invisible format/whitespace | U+00AD, U+2000-200A, U+2061-2064, U+3000, ... | LOW-MEDIUM | String comparison bypass, obfuscation |
+| Invisible identifiers | U+3164, U+FFA0, U+2800, U+115F-1160, U+13441-13442, U+16FE4 | MEDIUM | Invisible variable/function names |
+| Invisible format/whitespace | U+00AD, U+2000-200A, U+2061-2064, U+3000, U+1BCA0-1BCA3, U+1D173-1D17A, ... | LOW-MEDIUM | String comparison bypass, obfuscation |
 
-416 codepoints total. Severity levels: CRITICAL > HIGH > MEDIUM > LOW > INFO.
+4,263 codepoints total: every code point Unicode marks as default-ignorable (drawn as nothing), every space and line separator other than the ordinary space, the control characters, and a few glyphs defined to be blank. Severity levels: CRITICAL > HIGH > MEDIUM > LOW > INFO.
+
+Two things keep a single file from flooding the report. A NUL byte is reported once per file, and a file stops being scanned after 10,000 findings, with a warning. Form feed, which many C, Python and Emacs Lisp files use as a page break, is listed only at `--severity info`. A file that is really binary but has a source extension, or a fixture holding raw terminal escape sequences, will now be reported; add it to the allowlist.
 
 ## CLI Reference
 
