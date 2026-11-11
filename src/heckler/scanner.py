@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 from dataclasses import dataclass, field
@@ -327,6 +328,11 @@ class Scanner:
     def scan_path(self, root: Path) -> list[Finding]:
         """Recursively scan a directory or single file."""
         if root.is_file():
+            # A file named on the command line (which is how pre-commit passes
+            # them) still honours the allowlist, so .heckler.yml means the
+            # same thing whether heckler walks a directory or is handed files.
+            if self._is_excluded(root):
+                return []
             return self.scan_file(root)
 
         all_findings: list[Finding] = []
@@ -428,7 +434,63 @@ class Scanner:
 
 
 def _glob_match(path: str, pattern: str) -> bool:
-    """Glob matching for exclude patterns, supporting ** patterns."""
-    from pathlib import PurePath
-    # PurePath.match handles ** (recursive) patterns correctly
-    return PurePath(path).match(pattern)
+    """Match *path* against an allowlist glob.
+
+    ``*`` and ``?`` stay within one path segment; ``**`` spans any number of
+    them, including none. A pattern without a leading ``/`` matches at any
+    depth, so ``*.po`` covers ``a/b/c.po``. A trailing ``/`` means everything
+    under that directory.
+
+    ``PurePath.match`` is not used because it treats ``**`` like ``*``, and
+    ``PurePath.full_match`` needs Python 3.13.
+    """
+    return _compile_glob(pattern).search(path.replace('\\', '/')) is not None
+
+
+@functools.lru_cache(maxsize=256)
+def _compile_glob(pattern: str) -> re.Pattern[str]:
+    pattern = pattern.replace('\\', '/')
+    anchored = pattern.startswith('/')
+    if pattern.endswith('/'):
+        pattern += '**'
+    segments = [seg for seg in pattern.split('/') if seg and seg != '.']
+
+    parts: list[str] = []
+    for i, seg in enumerate(segments):
+        last = i == len(segments) - 1
+        if seg == '**':
+            parts.append('.*' if last else '(?:[^/]+/)*')
+        else:
+            parts.append(_translate_glob_segment(seg) + ('' if last else '/'))
+
+    prefix = '^/' if anchored else '(?:^|/)'
+    flags = re.IGNORECASE if os.name == 'nt' else 0
+    return re.compile(prefix + ''.join(parts) + '$', flags)
+
+
+def _translate_glob_segment(segment: str) -> str:
+    """Translate one ``/``-free glob segment to a regex fragment."""
+    out: list[str] = []
+    i = 0
+    while i < len(segment):
+        ch = segment[i]
+        i += 1
+        if ch == '*':
+            out.append('[^/]*')
+        elif ch == '?':
+            out.append('[^/]')
+        elif ch == '[':
+            # A "]" straight after "[" or "[!" is a literal member of the set.
+            start = i + 1 if segment[i:i + 1] == '!' else i
+            end = segment.find(']', start + 1)
+            if end == -1:
+                out.append(re.escape(ch))
+                continue
+            negate = segment[i] == '!'
+            members = segment[i + 1 if negate else i:end]
+            members = re.sub(r'([\\^\[&~|])', r'\\\1', members)
+            out.append(f"(?!/)[{'^' if negate else ''}{members}]")
+            i = end + 1
+        else:
+            out.append(re.escape(ch))
+    return ''.join(out)

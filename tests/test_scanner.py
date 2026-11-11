@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from heckler.characters import Severity, ThreatCategory
-from heckler.scanner import Scanner
+from heckler.scanner import Scanner, _glob_match
 
 
 class TestScanText:
@@ -151,3 +153,67 @@ class TestScanPath:
         findings = scanner.scan_path(tmp_path)
         assert any("include.js" in f.file for f in findings)
         assert not any("exclude.po" in f.file for f in findings)
+
+
+class TestAllowlist:
+    """The allowlist applies however a file reaches the scanner."""
+
+    def test_named_file_honours_allowlist(self, tmp_path: Path) -> None:
+        # pre-commit hands heckler individual files rather than a directory.
+        target = tmp_path / "locale" / "de" / "messages.js"
+        target.parent.mkdir(parents=True)
+        target.write_text('\uFE01', encoding='utf-8')
+
+        scanner = Scanner(exclude_patterns=["**/locale/**"])
+        assert scanner.scan_path(target) == []
+        assert scanner.scan_paths([target]) == []
+
+    def test_named_file_outside_allowlist_is_scanned(self, tmp_path: Path) -> None:
+        target = tmp_path / "src" / "app.js"
+        target.parent.mkdir(parents=True)
+        target.write_text('\uFE01', encoding='utf-8')
+
+        scanner = Scanner(exclude_patterns=["**/locale/**"])
+        assert len(scanner.scan_path(target)) == 1
+
+    def test_walk_honours_recursive_pattern(self, tmp_path: Path) -> None:
+        nested = tmp_path / "locale" / "de" / "LC_MESSAGES"
+        nested.mkdir(parents=True)
+        (nested / "app.js").write_text('\uFE01', encoding='utf-8')
+        (tmp_path / "app.js").write_text('\uFE01', encoding='utf-8')
+
+        findings = Scanner(exclude_patterns=["**/locale/**"]).scan_path(tmp_path)
+        assert len(findings) == 1
+        assert "locale" not in findings[0].file
+
+    @pytest.mark.parametrize(("path", "pattern"), [
+        ("top.po", "**/*.po"),
+        ("a/b/c.po", "**/*.po"),
+        ("a/b/c.po", "*.po"),
+        ("locale/de/LC_MESSAGES/app.po", "**/locale/**"),
+        ("src/locale/app.po", "**/locale/**"),
+        ("/abs/repo/src/locale/de/app.po", "**/locale/**"),
+        ("locale/de/app.po", "locale/"),
+        ("testdata/b.js", "testdata/*"),
+        ("src/a/b/gen.js", "src/**/gen.js"),
+        ("src/gen.js", "src/**/gen.js"),
+        ("a\\b\\c.po", "**/*.po"),
+        ("docs/v1.md", "docs/v[0-9].md"),
+        ("/abs/repo/x.js", "/abs/repo/*.js"),
+    ])
+    def test_glob_matches(self, path: str, pattern: str) -> None:
+        assert _glob_match(path, pattern)
+
+    @pytest.mark.parametrize(("path", "pattern"), [
+        ("testdata/a/b.js", "testdata/*"),
+        ("src/app.po.js", "*.po"),
+        ("mylocale/app.po", "**/locale/**"),
+        ("locale", "**/locale/**"),
+        ("src/a/b.js", "src/*.js"),
+        ("docs/vx.md", "docs/v[0-9].md"),
+        ("docs/v1.md", "docs/v[!0-9].md"),
+        ("/abs/repo/sub/x.js", "/abs/repo/*.js"),
+        ("other/abs/repo/x.js", "/abs/repo/*.js"),
+    ])
+    def test_glob_rejects(self, path: str, pattern: str) -> None:
+        assert not _glob_match(path, pattern)
