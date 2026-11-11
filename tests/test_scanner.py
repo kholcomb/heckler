@@ -145,6 +145,17 @@ class TestScanPath:
         dep_findings = [f for f in findings if f.source == "dependency"]
         assert dep_findings[0].package == "@scope/pkg"
 
+    def test_scan_deps_names_the_innermost_package(self, tmp_path: Path) -> None:
+        """pnpm keeps a package in node_modules/.pnpm/<name>@<version>/node_modules/<name>."""
+        store = tmp_path / "node_modules" / ".pnpm" / "pkg@1.0.0" / "node_modules" / "pkg"
+        nested = tmp_path / "node_modules" / "outer" / "node_modules" / "@scope" / "inner"
+        for directory in (store, nested):
+            directory.mkdir(parents=True)
+            (directory / "index.js").write_text("// " + chr(0x200B) + "\n", encoding="utf-8")
+
+        findings = Scanner(scan_deps=True).scan_path(tmp_path)
+        assert sorted(str(f.package) for f in findings) == ["@scope/inner", "pkg"]
+
     def test_exclude_patterns(self, tmp_path: Path) -> None:
         (tmp_path / "include.js").write_text("\ufe01", encoding="utf-8")
         (tmp_path / "exclude.po").write_text("\ufe01", encoding="utf-8")

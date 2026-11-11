@@ -176,7 +176,7 @@ jobs:
           try:
               with open(path, encoding="utf-8") as report:
                   findings = json.load(report)
-          except ValueError:
+          except (OSError, ValueError):
               findings = None
           if not isinstance(findings, list) or bool(findings) != bool(status):
               problem = f"heckler exited with code {status}, which its report does not match"

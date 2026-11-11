@@ -63,6 +63,7 @@ Tests fail when these drift, so change both sides together.
 - `README.md` and the code (`tests/test_readme.py`): the extension table lists exactly `DEFAULT_TEXT_EXTENSIONS`, the "N+ file extensions" figure and the code point count are checked, every CLI option appears in the CLI Reference, and the example output is what the tool really prints.
 - `scripts/heckler-scan.sh` and the scanner's file lists (`tests/test_coverage.py`): the list in the script is generated, so run `scripts/sync_shell_includes.py` and do not edit it by hand.
 - The `files:` pattern of the `heckler-lockfile` hook in `.pre-commit-hooks.yaml` and `detect_ecosystem()` in `lockfile.py` (`tests/test_lockfile.py`).
+- `examples/dependency-scan.yml` (`tests/test_examples.py`): its two trigger lists and the lockfiles its install step handles are the same set, and the promises in its header (no package scripts, wheels only, no cache, a read-only token) are checked.
 - `CHANGELOG.md` follows Keep a Changelog. User-visible changes go under `[Unreleased]` as one-line entries that describe behaviour.
 
 ## Tests and fixtures

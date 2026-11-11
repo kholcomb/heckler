@@ -51,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The flags of England, Scotland and Wales, the only emoji built from tag characters, are reported at INFO instead of HIGH
 - Files are reported in sorted order, the same on every filesystem
 - The file list of `scripts/heckler-scan.sh` is the scanner's default list; it used to cover 30 extensions and no extensionless files
+- The dependency scan workflow is now an example to copy, `examples/dependency-scan.yml`, and no longer runs in this repository, which has no dependencies to scan. It installs heckler from PyPI, scans only the directories it installed into, starts only for the lockfiles it can install from (uv is new; Go, Ruby and Composer lockfiles no longer start it), and keeps no cache, so the weekly run scans again
 - A release is a tag of the form `vMAJOR.MINOR.PATCH` and nothing else. The release workflow stops before publishing when the tag does not match the package version or this file has no section for it, and a major tag such as `v1` moves only to the newest release of its major version
 
 ### Fixed
@@ -65,10 +66,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.env.example` was in the extension list, where it could never match; `.env` and `.env.*` are now matched by name
 - A requirement pinned with a wildcard (`name==1.*`) is no longer reported as installed at the wrong version
 - The example in the README is the tool's real output, and a test keeps it so
+- The dependency scan workflow scans Python dependencies. It installs them into `.venv` in the workspace; they used to be installed outside it, where `--scan-deps .` never looked
+- The dependency scan workflow no longer reports a clean result when it found no lockfile to install from, when the install left nothing to scan, or when the scan's output could not be read
 
 ### Security
 
 - A NUL byte no longer hides the rest of a file from the scanner
+- The dependency scan workflow installs without running install scripts and takes Python packages from wheels only, with a read-only token that is not left in the checkout
 - A UTF-16 byte order mark in front of UTF-8 text no longer hides the text from the scanner
 - Text that is shaped like a suppression directive but is not a comment, such as a `#heckler-ignore` URL fragment or a `--heckler-ignore` flag at the end of a line, no longer suppresses findings
 - `--vet` no longer passes a PyPI release on the strength of its wheel alone when the sdist, or another wheel, holds the characters

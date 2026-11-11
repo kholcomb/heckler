@@ -287,7 +287,11 @@ The lockfile hook scans installed packages, so install dependencies before commi
 
 ### Dependency Scanning Workflow
 
-A separate workflow (`dependency-scan.yml`) triggers on lockfile changes and weekly, auto-detects your package manager, installs dependencies, scans them, and reports findings in the GitHub Actions job summary. Results are cached by lockfile hash.
+[`examples/dependency-scan.yml`](examples/dependency-scan.yml) is a workflow to copy into `.github/workflows/` of your own repository. It runs when a lockfile in the repository root changes, once a week, and on demand. It installs the dependencies into the workspace (`node_modules` for npm, yarn and pnpm; `.venv` for uv, poetry, pipenv and `requirements*.txt`), scans those directories with `--scan-deps`, and writes the findings to the job summary.
+
+- A package does not get to run code before it is scanned: install scripts are off and Python packages come from wheels only. One case is left. pip, pipenv and poetry build a requirement that points at a URL, a path or a git repository whatever they are told, which is why the job has a read-only token.
+- Nothing is cached. The weekly run scans again with the current heckler release and with whatever an unpinned requirement resolves to that week.
+- A run with nothing to scan fails: no lockfile it can install from, or an install that left no packages in the workspace, as Yarn Plug'n'Play does.
 
 ## Defense-in-Depth
 
@@ -297,7 +301,7 @@ A separate workflow (`dependency-scan.yml`) triggers on lockfile changes and wee
 | Pre-commit (source) | `git commit` | <2s | Invisible chars in your own code |
 | Pre-commit (lockfile) | Lockfile change + commit | <2s | Changed deps via diff-based scanning |
 | CI source scan | PR / push | <5s | Source scan, enforceable |
-| CI dep scan | Lockfile change + weekly | 30-60s (cached: 5s) | Full dependency tree post-install |
+| CI dep scan | Lockfile change + weekly | The install, then 30-60s | Installed dependencies |
 
 ## Shell Script (Zero Dependencies)
 
