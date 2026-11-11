@@ -309,20 +309,12 @@ class Scanner:
             except Exception:
                 return []
 
-        # UTF-8 path (no BOM or UTF-8 BOM already handled by codec)
-        # Check for null bytes — scan text before the first null instead
-        # of skipping the entire file (prevents null-byte injection bypass)
-        null_pos = raw.find(b'\x00')
-        if null_pos != -1:
-            if null_pos == 0:
-                return []  # Truly binary (starts with null)
-            # Scan the portion before the null byte
-            raw = raw[:null_pos]
-
-        try:
-            text = raw.decode('utf-8', errors='replace')
-        except Exception:
-            return []
+        # UTF-8 path. A NUL byte does not end the scan: JavaScript accepts
+        # one inside a comment, PHP before its opening tag, and bash after
+        # the first line, so stopping there would let a single byte hide
+        # everything that follows it. Whether a file is worth scanning at all
+        # is decided by the caller, from its name.
+        text = raw.decode('utf-8', errors='replace')
         return self.scan_text(text, str(filepath))
 
     def scan_path(self, root: Path) -> list[Finding]:
@@ -355,7 +347,12 @@ class Scanner:
                     continue
                 has_ext = bool(fpath.suffix)
                 if exts is None:
-                    all_findings.extend(self.scan_file(fpath))
+                    # Scanning everything: with no extension filter, content
+                    # is the only way to leave out images, archives and the
+                    # like. A recognised source name is always scanned, so a
+                    # NUL byte cannot be used to opt such a file out.
+                    if self._is_source_name(fpath) or not self._is_binary(fpath):
+                        all_findings.extend(self.scan_file(fpath))
                     continue
                 ext_match = has_ext and fpath.suffix.lower() in exts
                 name_match = not has_ext and fname in KNOWN_FILENAMES
@@ -423,14 +420,26 @@ class Scanner:
         return any(_glob_match(fp_str, pattern) for pattern in self.exclude_patterns)
 
     @staticmethod
+    def _is_source_name(filepath: Path) -> bool:
+        """True if the name alone marks the file as one heckler scans by default."""
+        return (
+            filepath.suffix.lower() in DEFAULT_TEXT_EXTENSIONS
+            or filepath.name in KNOWN_FILENAMES
+        )
+
+    @staticmethod
     def _is_binary(filepath: Path) -> bool:
-        """Check if a file is binary by looking for null bytes."""
+        """Check if a file is binary by looking for null bytes.
+
+        UTF-16 and UTF-32 text is full of them, so a BOM for either counts
+        as text.
+        """
         try:
             with open(filepath, 'rb') as f:
                 chunk = f.read(_BINARY_CHECK_SIZE)
-                return b'\x00' in chunk
         except (OSError, PermissionError):
             return True
+        return _detect_bom_encoding(chunk) is None and b'\x00' in chunk
 
 
 def _glob_match(path: str, pattern: str) -> bool:

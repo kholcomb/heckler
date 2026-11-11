@@ -265,12 +265,35 @@ class TestNullByteHardening:
         assert len(findings) == 1
         assert findings[0].codepoint == 0xFE01
 
-    def test_null_at_start_skips_file(self, tmp_path: Path) -> None:
-        """A file starting with null is genuinely binary — skip it."""
+    def test_binary_content_without_dangerous_chars_is_clean(self, tmp_path: Path) -> None:
         f = tmp_path / "binary.js"
         f.write_bytes(b'\x00\x01\x02')
         scanner = Scanner()
         assert scanner.scan_file(f) == []
+
+    def test_null_before_dangerous_chars_does_not_hide_them(self, tmp_path: Path) -> None:
+        """A NUL in a comment on line 1 must not stop the scan."""
+        f = tmp_path / "hidden.js"
+        f.write_bytes(b'//\x00\n' + 'const p = `\uFE01\uFE02\uFE03`;\n'.encode())
+
+        findings = Scanner().scan_file(f)
+        assert [x.codepoint for x in findings] == [0xFE01, 0xFE02, 0xFE03]
+        assert all(x.line == 2 for x in findings)
+
+    def test_leading_null_does_not_hide_the_file(self, tmp_path: Path) -> None:
+        """PHP emits anything before its opening tag, so a file can start with NUL."""
+        f = tmp_path / "page.php"
+        f.write_bytes(b'\x00\x00<?php\n' + '$p = "\u202E";\n'.encode())
+
+        findings = Scanner().scan_file(f)
+        assert [x.codepoint for x in findings] == [0x202E]
+
+    def test_null_does_not_hide_chars_in_directory_walk(self, tmp_path: Path) -> None:
+        (tmp_path / "hidden.js").write_bytes(
+            b'//\x00\n' + 'const p = `\uFE01`;\n'.encode(),
+        )
+        assert len(Scanner().scan_path(tmp_path)) == 1
+        assert len(Scanner(text_extensions=None).scan_path(tmp_path)) == 1
 
     def test_null_byte_midfile_scans_prefix(self, tmp_path: Path) -> None:
         """Dangerous chars in the text portion before null should be found."""
@@ -280,6 +303,29 @@ class TestNullByteHardening:
         scanner = Scanner()
         findings = scanner.scan_file(f)
         assert len(findings) == 2
+
+
+class TestAllTextBinaryFilter:
+    """With no extension filter, content decides what is left out."""
+
+    def test_unrecognised_binary_is_skipped(self, tmp_path: Path) -> None:
+        # Bytes that would decode to U+00A0 if the file were read as text.
+        (tmp_path / "blob.bin").write_bytes(b'\x89PNG\x00\x00' + b'\xc2\xa0' * 10)
+        assert Scanner(text_extensions=None).scan_path(tmp_path) == []
+
+    def test_unrecognised_text_is_scanned(self, tmp_path: Path) -> None:
+        (tmp_path / "notes.weird").write_text('a\u200Bb\n', encoding='utf-8')
+        assert len(Scanner(text_extensions=None).scan_path(tmp_path)) == 1
+
+    def test_unrecognised_utf16_is_scanned(self, tmp_path: Path) -> None:
+        (tmp_path / "notes.weird").write_bytes(
+            b'\xff\xfe' + 'x = "\u202E";\n'.encode('utf-16-le'),
+        )
+        assert len(Scanner(text_extensions=None).scan_path(tmp_path)) == 1
+
+    def test_known_filename_with_null_is_scanned(self, tmp_path: Path) -> None:
+        (tmp_path / "Makefile").write_bytes(b'#\x00\n' + 'x = \u202E\n'.encode())
+        assert len(Scanner(text_extensions=None).scan_path(tmp_path)) == 1
 
 
 # ---------------------------------------------------------------------------
