@@ -11,6 +11,8 @@
   description: Scan changed dependencies for invisible Unicode attacks
   entry: heckler --ci --scan-deps --diff-only
   language: python
-  files: (package-lock\.json|yarn\.lock|pnpm-lock\.yaml|requirements\.txt|poetry\.lock|Pipfile\.lock|Cargo\.lock|go\.sum|Gemfile\.lock|composer\.lock)$
+  # Only the lockfiles heckler can parse; others would show as passed unchecked.
+  files: (^|/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|requirements\.txt|poetry\.lock|Pipfile\.lock)$
   pass_filenames: true
   stages: [pre-commit]
+  minimum_pre_commit_version: '3.2.0'  # the first release with the pre-commit stage name

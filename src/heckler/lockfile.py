@@ -1,19 +1,30 @@
 """Lockfile diff parsing for targeted dependency scanning.
 
 Parses staged lockfile diffs to identify changed packages, then scans
-only those package directories — fast enough for pre-commit (<2s).
+only the installed copies of those packages — fast enough for pre-commit
+(<2s). A changed package that is not installed, or is installed at a
+different version than the lockfile names, is reported as unscanned
+rather than passed over.
 """
 
 from __future__ import annotations
 
+import csv
+import functools
+import json
+import os
 import re
+import site
 import subprocess
 import sys
-from pathlib import Path
+import sysconfig
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
+from .scanner import DEP_SCAN_EXTENSIONS
+
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
 
     from .scanner import Finding, Scanner
 
@@ -42,25 +53,33 @@ def detect_ecosystem(lockfile_path: str) -> str:
     return mapping.get(name, "unknown")
 
 
+def _git_diff(*args: str) -> str:
+    result = subprocess.run(
+        ["git", "diff", _FULL_CONTEXT, *args],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return result.stdout if result.returncode == 0 else ""
+
+
 def get_lockfile_diff(lockfile_path: str) -> str:
-    """Get the staged diff for a lockfile."""
+    """Get the diff for a lockfile.
+
+    The staged diff comes first, then the unstaged one. When neither exists
+    and pre-commit is checking a range of commits (a push hook, or
+    ``pre-commit run --from-ref ... --to-ref ...`` in CI), the diff across
+    that range is used.
+    """
     try:
-        result = subprocess.run(
-            ["git", "diff", "--cached", _FULL_CONTEXT, "--", lockfile_path],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode == 0 and result.stdout:
-            return result.stdout
-        # Fall back to unstaged diff
-        result = subprocess.run(
-            ["git", "diff", _FULL_CONTEXT, "--", lockfile_path],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        return result.stdout if result.returncode == 0 else ""
+        diff = _git_diff("--cached", "--", lockfile_path) or _git_diff("--", lockfile_path)
+        if diff:
+            return diff
+        from_ref = os.environ.get("PRE_COMMIT_FROM_REF", "")
+        to_ref = os.environ.get("PRE_COMMIT_TO_REF", "")
+        if from_ref and to_ref and not from_ref.startswith("-") and not to_ref.startswith("-"):
+            return _git_diff(f"{from_ref}...{to_ref}", "--", lockfile_path)
+        return ""
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return ""
 
@@ -397,57 +416,297 @@ def _parse_pipfile_lock_diff(diff_text: str) -> list[tuple[str, str]]:
     return changes.result()
 
 
+# ---------------------------------------------------------------------------
+# Locating the installed copy of a changed package
+# ---------------------------------------------------------------------------
+
+_NODE_ECOSYSTEMS = ("npm", "yarn", "pnpm")
+_PYTHON_ECOSYSTEMS = ("pip", "poetry", "pipenv")
+_VENV_DIR_NAMES = (".venv", "venv", "env")
+_MAX_PATH_INTERPRETERS = 4
+
+_SITE_PACKAGES_QUERY = (
+    "import site, sysconfig; p = sysconfig.get_paths(); "
+    "print(p['purelib']); print(p['platlib']); "
+    "print(site.getusersitepackages() if site.ENABLE_USER_SITE else '')"
+)
+
+
+def _node_installed_version(pkg_dir: Path) -> str | None:
+    try:
+        data = json.loads((pkg_dir / "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    version = data.get("version") if isinstance(data, dict) else None
+    return version if isinstance(version, str) else None
+
+
+def _node_candidates(
+    pkg_name: str, version: str, ecosystem: str, lockfile_dir: Path
+) -> Iterator[Path]:
+    """Directories where a node package may be installed, most likely first."""
+    yield lockfile_dir / "node_modules" / pkg_name
+    # Walk up for installs hoisted to a yarn/npm workspace root.
+    current = lockfile_dir.parent
+    for _ in range(5):
+        yield current / "node_modules" / pkg_name
+        if current.parent == current:
+            break
+        current = current.parent
+
+    modules = lockfile_dir / "node_modules"
+    if ecosystem == "pnpm" and version:
+        # pnpm keeps every package in a virtual store and links only the
+        # direct dependencies into node_modules itself.
+        store_name = pkg_name.replace("/", "+")
+        for entry in sorted(modules.glob(f".pnpm/{store_name}@{version}*")):
+            yield entry / "node_modules" / pkg_name
+    if ecosystem == "yarn":
+        # A second version of a package is nested under what depends on it.
+        yield from sorted(modules.glob(f"*/node_modules/{pkg_name}"))
+        yield from sorted(modules.glob(f"@*/*/node_modules/{pkg_name}"))
+
+
+def _resolve_node(
+    pkg_name: str, version: str, ecosystem: str, lockfile_dir: Path
+) -> tuple[list[Path], str]:
+    other_versions: list[str] = []
+    for candidate in _node_candidates(pkg_name, version, ecosystem, lockfile_dir):
+        if not candidate.is_dir():
+            continue
+        installed = _node_installed_version(candidate)
+        if version and installed and installed != version:
+            other_versions.append(installed)
+            continue
+        return [candidate], ""
+    if other_versions:
+        return [], f"the installed version is {other_versions[0]}"
+    return [], "it is not installed"
+
+
+def _venv_site_packages(venv: Path) -> list[Path]:
+    found = sorted(venv.glob("lib*/python*/site-packages"))
+    windows_layout = venv / "Lib" / "site-packages"
+    if windows_layout.is_dir():
+        found.append(windows_layout)
+    return found
+
+
+def _own_site_packages() -> list[Path]:
+    paths = sysconfig.get_paths()
+    dirs = [paths["purelib"], paths["platlib"]]
+    if site.ENABLE_USER_SITE:
+        dirs.append(site.getusersitepackages())
+    return [Path(d) for d in dirs]
+
+
+def _query_interpreter(executable: str) -> list[Path]:
+    try:
+        result = subprocess.run(
+            [executable, "-c", _SITE_PACKAGES_QUERY],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+    return [Path(line) for line in result.stdout.splitlines() if line.strip()]
+
+
+@functools.lru_cache(maxsize=1)
+def _path_site_packages() -> tuple[Path, ...]:
+    """Site-packages of the other Python interpreters on PATH.
+
+    Under pre-commit heckler runs from its own isolated environment, which
+    never holds the project's dependencies. pre-commit puts that environment
+    first on PATH and leaves the rest as it was, so a virtualenv that was
+    active when the commit started is still there to be found.
+    """
+    own_bin = os.path.dirname(os.path.abspath(sys.executable))
+    names = ("python.exe",) if os.name == "nt" else ("python3", "python")
+    found: list[Path] = []
+    queried = 0
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        if not directory or os.path.abspath(directory) == own_bin:
+            continue
+        for name in names:
+            executable = os.path.join(directory, name)
+            if os.path.isfile(executable) and os.access(executable, os.X_OK):
+                found.extend(_query_interpreter(executable))
+                queried += 1
+                break
+        if queried >= _MAX_PATH_INTERPRETERS:
+            break
+    return tuple(found)
+
+
+def _python_site_packages(lockfile_dir: Path) -> Iterator[Path]:
+    """Site-packages directories that may hold the project's dependencies.
+
+    Cheapest and most specific first: a virtualenv next to the lockfile or in
+    the working directory, then the environment heckler itself runs in, then
+    whatever other interpreters are on PATH.
+    """
+    seen: set[Path] = set()
+
+    def fresh(paths: Iterable[Path]) -> Iterator[Path]:
+        for path in paths:
+            resolved = path.resolve()
+            if resolved not in seen and path.is_dir():
+                seen.add(resolved)
+                yield path
+
+    for base in (lockfile_dir, Path.cwd()):
+        for name in _VENV_DIR_NAMES:
+            venv = base / name
+            if (venv / "pyvenv.cfg").is_file():
+                yield from fresh(_venv_site_packages(venv))
+    yield from fresh(_own_site_packages())
+    yield from fresh(_path_site_packages())
+
+
+def _normalize_dist_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _same_python_version(left: str, right: str) -> bool:
+    """Compare two version strings the way ``==`` does, ignoring zero padding."""
+
+    def normalize(version: str) -> str:
+        version = version.strip().lower().lstrip("v").split("+", 1)[0]
+        m = re.match(r"^(\d+(?:\.\d+)*)(.*)$", version)
+        if not m:
+            return version
+        release = m.group(1).split(".")
+        while len(release) > 1 and release[-1] == "0":
+            release.pop()
+        return ".".join(release) + re.sub(r"[-_.]", "", m.group(2))
+
+    return normalize(left) == normalize(right)
+
+
+def _find_distributions(site_packages: Path, name: str) -> list[tuple[Path, str]]:
+    """Installed distributions of *name*, as ``(metadata path, version)``.
+
+    The import name of a package is often not its distribution name (PyYAML
+    installs ``yaml``), so the lookup goes through the ``.dist-info`` and
+    ``.egg-info`` entries that installers leave behind.
+    """
+    wanted = _normalize_dist_name(name)
+    try:
+        entries = sorted(site_packages.iterdir())
+    except OSError:
+        return []
+    found: list[tuple[Path, str]] = []
+    for entry in entries:
+        if entry.suffix not in (".dist-info", ".egg-info"):
+            continue
+        parts = entry.name[: -len(entry.suffix)].split("-")
+        if _normalize_dist_name(parts[0]) == wanted:
+            found.append((entry, parts[1] if len(parts) > 1 else ""))
+    return found
+
+
+def _distribution_files(site_packages: Path, metadata: Path) -> list[Path]:
+    """What a distribution installed that is worth scanning.
+
+    ``RECORD`` lists every installed file, which keeps the scan to this one
+    distribution even when it shares a namespace directory with others.
+    Without it, ``top_level.txt`` names the modules and packages.
+    """
+    record = metadata / "RECORD"
+    if record.is_file():
+        files: list[Path] = []
+        try:
+            with open(record, encoding="utf-8", newline="") as f:
+                rows = [row for row in csv.reader(f) if row]
+        except (OSError, UnicodeDecodeError, csv.Error):
+            rows = []
+        for row in rows:
+            relative = PurePosixPath(row[0])
+            if relative.is_absolute() or ".." in relative.parts:
+                continue  # scripts and data installed outside site-packages
+            path = site_packages.joinpath(*relative.parts)
+            if path.suffix.lower() in DEP_SCAN_EXTENSIONS and path.is_file():
+                files.append(path)
+        return files
+
+    targets: list[Path] = []
+    top_level = metadata / "top_level.txt"
+    if top_level.is_file():
+        try:
+            modules = top_level.read_text(encoding="utf-8").split()
+        except (OSError, UnicodeDecodeError):
+            modules = []
+        for module in modules:
+            if (site_packages / module).is_dir():
+                targets.append(site_packages / module)
+            elif (site_packages / f"{module}.py").is_file():
+                targets.append(site_packages / f"{module}.py")
+    return targets
+
+
+def _resolve_python(pkg_name: str, version: str, lockfile_dir: Path) -> tuple[list[Path], str]:
+    other_versions: list[str] = []
+    for site_packages in _python_site_packages(lockfile_dir):
+        for metadata, installed in _find_distributions(site_packages, pkg_name):
+            if version and installed and not _same_python_version(installed, version):
+                other_versions.append(installed)
+                continue
+            return _distribution_files(site_packages, metadata), ""
+    if other_versions:
+        return [], f"the installed version is {other_versions[0]}"
+
+    # No installer metadata anywhere: fall back to a directory named after
+    # the package, which is all that can be said about such an install.
+    for site_packages in _python_site_packages(lockfile_dir):
+        for guess in (pkg_name, pkg_name.replace("-", "_")):
+            if (site_packages / guess).is_dir():
+                return [site_packages / guess], ""
+    return [], "it is not installed"
+
+
+def resolve_package(
+    pkg_name: str, version: str, ecosystem: str, lockfile_path: str
+) -> tuple[list[Path], str]:
+    """Find what to scan for a package that changed in a lockfile.
+
+    Returns ``(targets, problem)``. *targets* are directories or files to
+    scan and may be empty for a package that ships nothing scannable.
+    *problem* is empty on success; otherwise it says why the package cannot
+    be scanned, which is the case when it is not installed or when the
+    installed copy is a different version than the lockfile names.
+    """
+    lockfile_dir = Path(lockfile_path).parent
+    if ecosystem in _NODE_ECOSYSTEMS:
+        return _resolve_node(pkg_name, version, ecosystem, lockfile_dir)
+    if ecosystem in _PYTHON_ECOSYSTEMS:
+        return _resolve_python(pkg_name, version, lockfile_dir)
+    return [], f"{ecosystem} packages cannot be located"
+
+
 def resolve_package_dir(
     pkg_name: str,
     ecosystem: str,
     lockfile_path: str,
 ) -> Path | None:
-    """Map a package name to its install directory."""
-    lockfile_dir = Path(lockfile_path).parent
-
-    if ecosystem in ("npm", "yarn", "pnpm"):
-        # Check local node_modules, then walk up for hoisted
-        candidate = lockfile_dir / "node_modules" / pkg_name
-        if candidate.is_dir():
-            return candidate
-        # Walk up for yarn/npm workspaces
-        current = lockfile_dir.parent
-        for _ in range(5):
-            candidate = current / "node_modules" / pkg_name
-            if candidate.is_dir():
-                return candidate
-            if current.parent == current:
-                break
-            current = current.parent
-        return None
-
-    elif ecosystem in ("pip", "poetry", "pipenv"):
-        # Try to find site-packages
-        try:
-            result = subprocess.run(
-                [sys.executable, "-c", 'import site; print("\\n".join(site.getsitepackages()))'],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode == 0:
-                for sp in result.stdout.strip().splitlines():
-                    candidate = Path(sp) / pkg_name
-                    if candidate.is_dir():
-                        return candidate
-                    # Try with underscores (pip normalizes hyphens)
-                    candidate = Path(sp) / pkg_name.replace("-", "_")
-                    if candidate.is_dir():
-                        return candidate
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
-        return None
-
-    return None
+    """Map a package name to its install directory, if it has one."""
+    targets, _problem = resolve_package(pkg_name, "", ecosystem, lockfile_path)
+    return next((target for target in targets if target.is_dir()), None)
 
 
-def scan_changed_deps(lockfile_paths: list[str], scanner: Scanner) -> list[Finding]:
-    """Main entry point: parse lockfile diffs and scan only changed packages."""
+def scan_changed_deps(
+    lockfile_paths: list[str],
+    scanner: Scanner,
+    unscanned: list[str] | None = None,
+) -> list[Finding]:
+    """Main entry point: parse lockfile diffs and scan only changed packages.
+
+    A changed package that cannot be scanned is reported on stderr and, when
+    *unscanned* is given, described there so the caller can fail the run.
+    """
     all_findings: list[Finding] = []
 
     for lf_path in lockfile_paths:
@@ -458,28 +717,24 @@ def scan_changed_deps(lockfile_paths: list[str], scanner: Scanner) -> list[Findi
 
         diff_text = get_lockfile_diff(lf_path)
         if not diff_text:
-            # No diff — try scanning the lockfile's dependency dir entirely
             print(f"Warning: No diff available for {lf_path}. Skipping.", file=sys.stderr)
             continue
 
-        changed = parse_changed_packages(diff_text, ecosystem)
-        if not changed:
-            continue
-
-        for pkg_name, _version in changed:
-            pkg_dir = resolve_package_dir(pkg_name, ecosystem, lf_path)
-            if pkg_dir is None:
-                print(
-                    f"Warning: {pkg_name} changed in {lf_path} but install directory not found. "
-                    f"Run your package manager's install command and re-commit.",
-                    file=sys.stderr,
-                )
+        for pkg_name, version in parse_changed_packages(diff_text, ecosystem):
+            targets, problem = resolve_package(pkg_name, version, ecosystem, lf_path)
+            if problem:
+                label = f"{pkg_name} {version}".strip()
+                message = f"{label} changed in {lf_path} but was not scanned: {problem}"
+                print(f"Warning: {message}", file=sys.stderr)
+                if unscanned is not None:
+                    unscanned.append(message)
                 continue
-            findings = scanner.scan_path(pkg_dir)
-            # Tag findings with package info
-            for f in findings:
-                f.source = "dependency"
-                f.package = pkg_name
-            all_findings.extend(findings)
+            for target in targets:
+                findings = scanner.scan_path(target)
+                # Tag findings with package info
+                for f in findings:
+                    f.source = "dependency"
+                    f.package = pkg_name
+                all_findings.extend(findings)
 
     return all_findings

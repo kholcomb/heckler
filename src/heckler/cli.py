@@ -75,6 +75,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="With --scan-deps, only scan packages changed in staged lockfile diffs",
     )
     parser.add_argument(
+        "--allow-unscanned",
+        action="store_true",
+        help=(
+            "With --diff-only and --ci, do not fail when a changed package is"
+            " not installed or is installed at a different version"
+        ),
+    )
+    parser.add_argument(
         "--all-text",
         action="store_true",
         help="Scan all text files regardless of extension",
@@ -180,7 +188,8 @@ def _run_diff_only(args: argparse.Namespace, config: Config) -> int:
     )
 
     lockfile_paths = args.paths or []
-    findings = scan_changed_deps(lockfile_paths, scanner)
+    unscanned: list[str] = []
+    findings = scan_changed_deps(lockfile_paths, scanner, unscanned)
 
     formatter = get_formatter(args.format)
     color = not args.no_color and args.format == "text"
@@ -190,6 +199,15 @@ def _run_diff_only(args: argparse.Namespace, config: Config) -> int:
 
     if args.ci and findings:
         return 1
+    if args.ci and unscanned and not args.allow_unscanned:
+        # A package nobody looked at is not a clean result.
+        print(
+            f"Error: {len(unscanned)} changed package(s) could not be scanned (see the"
+            " warnings above). Install the dependencies the lockfile describes and run"
+            " again, or pass --allow-unscanned to accept this.",
+            file=sys.stderr,
+        )
+        return 2
     return 0
 
 
