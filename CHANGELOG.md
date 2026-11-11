@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Variation selectors and zero width joiners inside well-formed emoji are reported at INFO instead of CRITICAL and MEDIUM; set `allow_emoji: false` to flag every occurrence as before
+- `--all-text` leaves out files that have an unrecognised name and NUL bytes in their first 8 KB
+
+### Fixed
+
+- The allowlist applies to files passed by name, which is how the pre-commit hook receives them
+- `**` in allowlist patterns matches any number of directories on every supported Python version
+- `--diff-only` detects version bumps of existing packages in `package-lock.json`, `yarn.lock` and `poetry.lock`, not only newly added packages
+- Dependency constraints in `poetry.lock` are no longer read as package names
+- Inline `# comments` in `.heckler.yml` are no longer read as part of the value when PyYAML is not installed
+
+### Security
+
+- A NUL byte no longer hides the rest of a file from the scanner
+
 ## [1.0.0] - 2026-03-23
 
 Initial stable release and GitHub Actions Marketplace launch.
