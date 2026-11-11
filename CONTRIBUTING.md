@@ -107,6 +107,37 @@ heckler --ci --severity low .
 
 A maintainer will review your pull request as soon as possible.
 
+## Versioning and Releases
+
+Heckler follows [Semantic Versioning](https://semver.org/). The version is
+`MAJOR.MINOR.PATCH` in `src/heckler/_version.py`. What a version number makes
+a promise about is the interface: the command-line options, exit codes and
+output formats, the configuration keys, the library API, the inputs of the
+GitHub Action and the ids of the pre-commit hooks.
+
+- **MAJOR**: part of that interface is removed or changes meaning, so that a
+  setup which worked has to be changed.
+- **MINOR**: something is added and existing use keeps working. New
+  detections and newly scanned file types are MINOR: a scanner that finds
+  more is doing its job, so a run can start to fail on a MINOR release
+  because of what is found, never because of how heckler is invoked.
+- **PATCH**: fixes that change none of the above.
+
+To release:
+
+1. In a pull request, set the version in `src/heckler/_version.py` and move
+   the entries under `[Unreleased]` in `CHANGELOG.md` to a
+   `[MAJOR.MINOR.PATCH] - YYYY-MM-DD` section.
+2. Once it is merged, tag that commit on `main` as `vMAJOR.MINOR.PATCH` and
+   push the tag.
+
+The release workflow runs for a tag of exactly that form and stops before
+publishing if the tag does not match `_version.py` or `CHANGELOG.md` has no
+section for the version. It publishes to PyPI, creates the GitHub release,
+and moves the major tag (`v1`) to the newest release of that major version,
+which is what `uses: kholcomb/heckler@v1` follows. A MAJOR release gets a
+major tag of its own and leaves the previous one where it is.
+
 ## Reporting Bugs
 
 Please open an issue at

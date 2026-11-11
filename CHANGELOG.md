@@ -51,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The flags of England, Scotland and Wales, the only emoji built from tag characters, are reported at INFO instead of HIGH
 - Files are reported in sorted order, the same on every filesystem
 - The file list of `scripts/heckler-scan.sh` is the scanner's default list; it used to cover 30 extensions and no extensionless files
+- A release is a tag of the form `vMAJOR.MINOR.PATCH` and nothing else. The release workflow stops before publishing when the tag does not match the package version or this file has no section for it, and a major tag such as `v1` moves only to the newest release of its major version
 
 ### Fixed
 

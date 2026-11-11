@@ -12,6 +12,9 @@ from .config import Config, load_config
 from .formatters import get_formatter
 from .scanner import Finding, Scanner
 
+# How many skipped directories a note names before it counts the rest.
+_MAX_DIRS_NAMED = 5
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -217,7 +220,19 @@ def _finish(
 
 
 def _report_suppressions(scanner: Scanner) -> None:
-    """Say how much the heckler-ignore comments hid, so that it is never nothing."""
+    """Say what the scan left out or held back, so that it is never nothing."""
+    if scanner.skipped_dirs:
+        named = ", ".join(scanner.skipped_dirs[:_MAX_DIRS_NAMED])
+        more = len(scanner.skipped_dirs) - _MAX_DIRS_NAMED
+        if more > 0:
+            named += f" and {more} more"
+        advice = "" if scanner.scan_deps else " --scan-deps scans dependency directories."
+        print(f"Note: not scanned, skipped by directory name: {named}.{advice}", file=sys.stderr)
+    if scanner.binary:
+        print(
+            f"Note: {len(scanner.binary)} file(s) look binary and were not scanned.",
+            file=sys.stderr,
+        )
     if scanner.suppressed:
         print(
             f"Note: {sum(scanner.suppressed.values())} finding(s) suppressed in"
@@ -257,6 +272,14 @@ def _run_diff_only(args: argparse.Namespace, config: Config) -> int:
     scanner = _build_scanner(args, config, scan_deps=True)
 
     lockfile_paths = args.paths or []
+    if not lockfile_paths:
+        # No lockfile is no packages, and no packages would come out as clean.
+        print(
+            "Error: --diff-only needs the lockfiles to check, for example:"
+            " heckler --scan-deps --diff-only package-lock.json",
+            file=sys.stderr,
+        )
+        return 2
     unscanned: list[str] = []
     findings = scan_changed_deps(lockfile_paths, scanner, unscanned)
     unscanned += _report_skipped(scanner)

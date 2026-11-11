@@ -301,6 +301,9 @@ def download_package(
 # Archive extraction
 # ---------------------------------------------------------------------------
 
+# How many of the files left out as binary the report names.
+_MAX_BINARY_LISTED = 20
+
 _TAR_SUFFIXES = (".tgz", ".tar.gz", ".tar.bz2", ".tar")
 _ZIP_SUFFIXES = (".whl", ".zip", ".egg")
 
@@ -462,6 +465,7 @@ def vet_package(
     findings: list[Finding] = []
     scanned: list[str] = []
     not_scanned: list[tuple[str, str]] = []
+    binary: list[str] = []
 
     with tempfile.TemporaryDirectory(prefix="heckler-vet-") as tmpdir:
         archives = download_package(spec, registry, tmpdir, not_scanned)
@@ -478,7 +482,7 @@ def vet_package(
 
         for archive in archives:
             extract_dir = extract_package(archive, tmpdir)
-            already_skipped = len(scanner.skipped)
+            already_skipped, already_binary = len(scanner.skipped), len(scanner.binary)
             for f in scanner.scan_path(extract_dir):
                 f.file = _inside_archive(f.file, archive, extract_dir)
                 f.source = "dependency"
@@ -488,6 +492,10 @@ def vet_package(
             not_scanned.extend(
                 (_inside_archive(path, archive, extract_dir), reason)
                 for path, reason in scanner.skipped[already_skipped:]
+            )
+            binary.extend(
+                _inside_archive(path, archive, extract_dir)
+                for path in scanner.binary[already_binary:]
             )
 
     for name, reason in not_scanned:
@@ -516,6 +524,12 @@ def vet_package(
                 print(f"  scanned: {name}")
             for name, _reason in not_scanned:
                 print(f"  not scanned: {name}")
+            # Content decides what is binary, and the package wrote the
+            # content. Naming the files lets a reader see what that left out.
+            for name in binary[:_MAX_BINARY_LISTED]:
+                print(f"  binary, not scanned: {name}")
+            if len(binary) > _MAX_BINARY_LISTED:
+                print(f"  binary, not scanned: {len(binary) - _MAX_BINARY_LISTED} more file(s)")
 
     # "Nothing found" would be the wrong thing to say when part of the
     # package was never looked at; the header and warnings tell that story.

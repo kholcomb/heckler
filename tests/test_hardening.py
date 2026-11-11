@@ -1029,12 +1029,16 @@ class TestAllTextInsideDependencies:
         assert sorted(Path(f.file).name for f in findings) == ["cli", "notes.weird"]
 
     def test_without_all_text_the_dependency_list_applies(self, tmp_path: Path) -> None:
-        assert Scanner(scan_deps=True).scan_path(self._tree(tmp_path)) == []
+        """The list, and whatever starts with #!: bin/cli is a script by its first line."""
+        findings = Scanner(scan_deps=True).scan_path(self._tree(tmp_path))
+        assert sorted(Path(f.file).name for f in findings) == ["cli"]
 
-    def test_cli_flag(self, tmp_path: Path) -> None:
+    def test_cli_flag(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         tree = str(self._tree(tmp_path))
-        assert main(["--ci", "--scan-deps", tree]) == 0
-        assert main(["--ci", "--scan-deps", "--all-text", tree]) == 1
+        assert main(["--ci", "--scan-deps", "--no-color", tree]) == 1
+        assert "notes.weird" not in capsys.readouterr().out
+        assert main(["--ci", "--scan-deps", "--all-text", "--no-color", tree]) == 1
+        assert "notes.weird" in capsys.readouterr().out
 
 
 class TestFileSelection:

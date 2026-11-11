@@ -23,7 +23,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from .formatters.text import spell_out
-from .scanner import DEP_SCAN_EXTENSIONS, Scanner
+from .scanner import Scanner
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -779,10 +779,7 @@ def _distribution_files(site_packages: Path, metadata: Path, all_text: bool = Fa
             path = site_packages.joinpath(*relative.parts)
             if not path.is_file():
                 continue
-            if all_text:
-                wanted = Scanner.is_text_file(path)
-            else:
-                wanted = path.suffix.lower() in DEP_SCAN_EXTENSIONS
+            wanted = Scanner.is_text_file(path) if all_text else Scanner.is_dependency_source(path)
             if wanted:
                 files.append(path)
         return files

@@ -2,7 +2,10 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    # A release is a semantic version and nothing else: vMAJOR.MINOR.PATCH.
+    # The major tag this workflow moves (v1) does not match the pattern, so
+    # pushing it starts no run.
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
 
 jobs:
   publish:
@@ -13,10 +16,31 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          fetch-depth: 0  # all tags, to find the newest release of this major version
 
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
         with:
           python-version: '3.12'
+
+      - name: Check the tag against the package
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          if ! printf '%s\n' "$TAG_NAME" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            echo "::error::$TAG_NAME is not a semantic version tag (vMAJOR.MINOR.PATCH)."
+            exit 1
+          fi
+          version="${TAG_NAME#v}"
+          packaged="$(python -c 'import runpy; print(runpy.run_path("src/heckler/_version.py")["__version__"])')"
+          if [ "$version" != "$packaged" ]; then
+            echo "::error::Tag $TAG_NAME does not match version $packaged in src/heckler/_version.py."
+            exit 1
+          fi
+          if ! grep -q "^## \[${version//./\\.}\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no section for $version."
+            exit 1
+          fi
 
       - name: Build
         run: |
@@ -32,10 +56,18 @@ jobs:
           TAG_NAME: ${{ github.ref_name }}
         run: gh release create "$TAG_NAME" dist/* --generate-notes
 
-      - name: Update major version tag
+      - name: Move the major version tag
         env:
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          MAJOR=$(echo "$TAG_NAME" | grep -oE '^v[0-9]+')
-          git tag -f "$MAJOR" "$TAG_NAME"
-          git push -f origin "$MAJOR"
+          # v1 follows the newest 1.x.y. A fix released for an older minor
+          # version leaves it where it is, and a new major version gets a
+          # tag of its own.
+          major="${TAG_NAME%%.*}"
+          newest="$(git tag --list "$major.*" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+          if [ "$newest" != "$TAG_NAME" ]; then
+            echo "$major stays at $newest."
+            exit 0
+          fi
+          git tag -f "$major" "$TAG_NAME"
+          git push -f origin "$major"

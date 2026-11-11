@@ -512,6 +512,27 @@ class TestVetPackage:
         serve([_tar_gz(tmp_path / "pkg-1.0.0.tgz", {"package/logo.png": blob})])
         assert self._vet("pkg@1.0.0") == 0
 
+    def test_binary_files_are_named(
+        self, tmp_path: Path, serve: Serve, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        blob = b"\x89PNG\x00\x00" + chr(0xA0).encode() * 10
+        files = {"package/logo.png": blob, "package/index.js": b"1;\n"}
+        serve([_tar_gz(tmp_path / "pkg-1.0.0.tgz", files)])
+        assert self._vet("pkg@1.0.0") == 0
+        assert "  binary, not scanned: pkg-1.0.0.tgz/package/logo.png" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        "first_line",
+        [b"// cli \x00\n", b"#!/usr/bin/env node\n// \x00\n"],
+        ids=["plain", "shebang"],
+    )
+    def test_a_nul_does_not_opt_a_script_out(
+        self, tmp_path: Path, serve: Serve, first_line: bytes
+    ) -> None:
+        planted = first_line + f"// {PLANTED_SELECTORS}\n".encode() + b"run();\n" * 20
+        serve([_tar_gz(tmp_path / "pkg-1.0.0.tgz", {"package/bin/cli": planted})])
+        assert self._vet("pkg@1.0.0") == 1
+
     def test_suppression_comments_in_the_package_are_not_honoured(
         self, tmp_path: Path, serve: Serve
     ) -> None:

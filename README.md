@@ -10,7 +10,7 @@
 
 # Heckler
 
-Zero-dependency Python tool that detects dangerous invisible Unicode characters in source code and dependencies. Language-agnostic source scanning covers 110+ file extensions and well-known extensionless files (Makefile, Dockerfile, etc.) across all major ecosystems. Provides coverage on 4,263 codepoints across 7 threat categories including Glassworm supply chain attacks (Variation Selectors), Trojan Source (bidi controls, CVE-2021-42574), zero-width steganography, tag character injection, control characters, and exotic whitespace.
+Zero-dependency Python tool that detects dangerous invisible Unicode characters in source code and dependencies. Language-agnostic source scanning covers 120+ file extensions and well-known extensionless files (Makefile, Dockerfile, etc.) across all major ecosystems. Provides coverage on 4,263 codepoints across 7 threat categories including Glassworm supply chain attacks (Variation Selectors), Trojan Source (bidi controls, CVE-2021-42574), zero-width steganography, tag character injection, control characters, and exotic whitespace.
 
 ## Install
 
@@ -198,24 +198,24 @@ Suppression directives are **never honored in dependency code** (node\_modules, 
 
 ## Language Support
 
-Source scanning is **language-agnostic** — the regex-based detector works on any text file. Out of the box, heckler scans 110+ file extensions:
+Source scanning is **language-agnostic** — the regex-based detector works on any text file. Out of the box, heckler scans 120+ file extensions:
 
 | Category | Extensions |
 |---|---|
 | Web / JS / TS | `.js`, `.cjs`, `.mjs`, `.ts`, `.mts`, `.cts`, `.jsx`, `.tsx`, `.vue`, `.svelte` |
-| Python | `.py`, `.pyi`, `.pth`, `.ipynb` |
-| Systems | `.c`, `.cc`, `.cpp`, `.h`, `.hh`, `.hpp`, `.rs`, `.go`, `.zig`, `.nim`, `.d`, `.v`, `.asm`, `.s` |
-| JVM | `.java`, `.kt`, `.scala`, `.groovy`, `.clj`, `.cljs`, `.cljc`, `.edn` |
+| Python | `.py`, `.pyi`, `.pth`, `.pyx`, `.pxd`, `.pxi`, `.ipynb` |
+| Systems | `.c`, `.cc`, `.cpp`, `.cxx`, `.h`, `.hh`, `.hpp`, `.hxx`, `.rs`, `.go`, `.zig`, `.nim`, `.d`, `.v`, `.asm`, `.s` |
+| JVM | `.java`, `.kt`, `.kts`, `.scala`, `.groovy`, `.clj`, `.cljs`, `.cljc`, `.edn` |
 | .NET | `.cs`, `.vb`, `.vbs` |
 | Functional | `.hs`, `.lhs`, `.ml`, `.mli`, `.elm`, `.ex`, `.exs`, `.erl`, `.hrl`, `.purs`, `.rkt`, `.lisp`, `.cl`, `.el`, `.jl` |
 | Mobile | `.swift`, `.dart`, `.m`, `.mm` |
 | Scripting | `.rb`, `.php`, `.lua`, `.pl`, `.r`, `.tcl`, `.cr` |
 | Other languages | `.ada`, `.adb`, `.ads`, `.f90`, `.f95`, `.f03`, `.pas`, `.pp` |
 | Shell | `.sh`, `.bash`, `.zsh`, `.ps1`, `.bat`, `.cmd`, `.fish` |
-| Config / Data | `.yaml`, `.yml`, `.json`, `.toml`, `.xml`, `.cfg`, `.ini`, `.conf`, `.properties`, `.sql`, `.graphql`, `.gql`, `.proto`, `.tf`, `.hcl` |
-| Templates | `.html`, `.htm`, `.css`, `.scss`, `.ejs`, `.erb`, `.hbs`, `.njk`, `.pug`, `.jinja` |
+| Config / Data | `.yaml`, `.yml`, `.json`, `.jsonc`, `.json5`, `.toml`, `.xml`, `.cfg`, `.ini`, `.conf`, `.properties`, `.sql`, `.graphql`, `.gql`, `.proto`, `.tf`, `.hcl` |
+| Templates | `.html`, `.htm`, `.css`, `.scss`, `.sass`, `.less`, `.ejs`, `.erb`, `.hbs`, `.njk`, `.pug`, `.jinja`, `.jinja2`, `.j2` |
 | Build | `.gradle`, `.rake`, `.cmake`, `.mk`, `.dockerfile` |
-| Docs | `.md`, `.txt` |
+| Docs | `.md`, `.rst`, `.adoc`, `.txt` |
 | Agent instructions | `.mdc` |
 
 Well-known files without an extension are also scanned: `Makefile`, `Dockerfile`, `Jenkinsfile`, `Gemfile`, `Rakefile`, `Vagrantfile`, `Procfile`, `Justfile`, `BUILD`, `Podfile`, `.gitignore`, `.dockerignore`, `.env`, `.cursorrules`, `.windsurfrules`, `.clinerules`, and more, along with their dotted variants `Dockerfile.*` and `.env.*` (`Dockerfile.dev`, `.env.example`).
@@ -260,6 +260,8 @@ Available on the [GitHub Marketplace](https://github.com/marketplace/actions/hec
     format: sarif
     upload-sarif: true  # Findings appear in GitHub Security tab
 ```
+
+`@v1` follows the newest 1.x.y release; use a full version such as `@v1.0.0` to pin one. Versions follow [Semantic Versioning](https://semver.org/).
 
 Or invoke directly:
 

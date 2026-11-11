@@ -66,15 +66,17 @@ class Finding:
 DEFAULT_TEXT_EXTENSIONS = frozenset({
     # Core web / scripting
     '.js', '.cjs', '.mjs', '.ts', '.mts', '.cts', '.jsx', '.tsx', '.py', '.pyi',
-    '.pth', '.rb', '.go', '.rs', '.c', '.cc', '.cpp', '.h', '.hh', '.hpp',
-    '.java', '.cs', '.php', '.sh', '.bash', '.zsh', '.yaml', '.yml', '.json',
-    '.toml', '.xml', '.html', '.htm', '.css', '.scss', '.sql', '.swift', '.kt',
-    '.scala', '.lua', '.pl', '.r', '.md', '.txt', '.cfg', '.ini', '.dockerfile',
-    '.tf', '.hcl', '.vue', '.svelte', '.ipynb',
+    '.pth', '.rb', '.go', '.rs', '.c', '.cc', '.cpp', '.cxx', '.h', '.hh', '.hpp',
+    '.hxx', '.java', '.cs', '.php', '.sh', '.bash', '.zsh', '.yaml', '.yml',
+    '.json', '.jsonc', '.json5', '.toml', '.xml', '.html', '.htm', '.css', '.scss',
+    '.sass', '.less', '.sql', '.swift', '.kt', '.kts', '.scala', '.lua', '.pl',
+    '.r', '.md', '.rst', '.adoc', '.txt', '.cfg', '.ini', '.dockerfile', '.tf',
+    '.hcl', '.vue', '.svelte', '.ipynb',
+    '.pyx', '.pxd', '.pxi',                       # Cython
     # Shells
     '.ps1', '.bat', '.cmd', '.fish',
     # Templates
-    '.ejs', '.erb', '.hbs', '.njk', '.pug', '.jinja',
+    '.ejs', '.erb', '.hbs', '.njk', '.pug', '.jinja', '.jinja2', '.j2',
     # Instructions for coding agents
     '.mdc',
     # Build systems
@@ -113,7 +115,8 @@ DEFAULT_TEXT_EXTENSIONS = frozenset({
 # Well-known files without extensions that should be scanned
 KNOWN_FILENAMES = frozenset({
     'Makefile', 'GNUmakefile', 'makefile',
-    'Dockerfile', 'Jenkinsfile',
+    'Dockerfile', 'Containerfile', 'Jenkinsfile',
+    'go.mod', 'go.sum', 'go.work',
     'Gemfile', 'Rakefile',
     'Vagrantfile',
     'Brewfile',
@@ -139,13 +142,22 @@ KNOWN_FILENAMES = frozenset({
 # Names that carry their variant after a dot: Dockerfile.dev, .env.example.
 # Path.suffix is '.dev' and '.example' for those, so no extension list can
 # name them.
-KNOWN_FILENAME_PREFIXES = ('Dockerfile.', '.env.')
+KNOWN_FILENAME_PREFIXES = ('Dockerfile.', 'Containerfile.', '.env.')
 
-DEFAULT_SKIP_DIRS = frozenset({
-    'node_modules', 'vendor', '.git', '__pycache__', '.venv', 'venv',
-    'dist', 'build', 'target', '.next', '.nuxt', 'coverage',
-    'site-packages', '.tox', '.eggs', '.mypy_cache', '.ruff_cache',
+# Version control data and tool caches. Nothing in them is source, so
+# skipping one is not worth a mention.
+_NEVER_SCANNED_DIRS = frozenset({'.git', '__pycache__', '.mypy_cache', '.ruff_cache'})
+
+# Where dependencies are installed and where frameworks and test tools write
+# what they generate. --scan-deps scans these, and a scan that skipped one
+# says so. dist/ and build/ are not here: they hold what a project ships,
+# and some projects commit them, so they are scanned like any directory.
+DEPENDENCY_DIRS = frozenset({
+    'node_modules', 'vendor', 'site-packages', '.venv', 'venv', '.tox', '.eggs',
+    'target', '.next', '.nuxt', 'coverage',
 })
+
+DEFAULT_SKIP_DIRS = DEPENDENCY_DIRS | _NEVER_SCANNED_DIRS
 
 # Restricted set for dependency scanning — source files that could execute
 # or be imported as code. Broader than just "executable" to cover compiled
@@ -154,6 +166,7 @@ DEP_SCAN_EXTENSIONS = frozenset({
     '.js', '.cjs', '.mjs', '.ts', '.mts', '.cts',  # JavaScript/TypeScript
     '.jsx', '.tsx', '.vue', '.svelte',
     '.py', '.pyi', '.pth',                           # Python (.pth runs at startup)
+    '.pyx', '.pxd', '.pxi',                          # Cython
     '.sh', '.bash', '.ps1', '.bat',                  # Shell
     '.rb',                                            # Ruby
     '.php',                                           # PHP
@@ -178,6 +191,10 @@ DEP_SCAN_EXTENSIONS = frozenset({
     '.m', '.mm',                                      # Objective-C
 })
 # fmt: on
+
+# Files in a dependency that are scanned for what they are called: the
+# manifest names the scripts npm runs on install.
+DEP_SCAN_FILENAMES = frozenset({"package.json"})
 
 IGNORE_COMMENT = "heckler-ignore"
 
@@ -276,6 +293,38 @@ _ENCODING_LABELS = {
 
 _NOTHING: frozenset[int] = frozenset()
 
+# What a lenient decoder puts in place of each byte it cannot read.
+_REPLACEMENT = chr(0xFFFD)
+
+# The C0 controls that text has no use for: all but tab, LF, FF and CR.
+# Escape is left out as well. A log with colours in it is full of them, and
+# it is text, with escape sequences that are worth reporting.
+_CONTROL_BYTES = bytes(b for b in range(0x20) if b not in b"\t\n\x0c\r\x1b")
+
+# Data in which more than one byte in this many is one that text does not
+# hold is not text. Compressed data is at one in ten and an executable is
+# higher still; a text file with a stray NUL in it is far below.
+_TEXT_RATIO = 32
+
+# The second reading of a file whose byte order mark is believed reports
+# nothing below this code point. See Scanner.scan_file().
+_BELIEVED_BOM_FLOOR = 0xA0
+
+
+def _control_bytes(data: bytes) -> int:
+    """How many bytes of *data* are control characters that text does not hold."""
+    return len(data) - len(data.translate(None, _CONTROL_BYTES))
+
+
+def _is_utf8_text(data: bytes) -> bool:
+    """False if too much of *data* is control bytes or invalid UTF-8 to be text.
+
+    It takes a share of the bytes to say so. A single NUL proves nothing:
+    putting one in a comment costs one byte.
+    """
+    invalid = data.decode("utf-8", errors="replace").count(_REPLACEMENT)
+    return (_control_bytes(data) + invalid) * _TEXT_RATIO <= len(data)
+
 
 def _detect_bom_encoding(raw: bytes) -> str | None:
     """Return the codec name if *raw* starts with a UTF-16/32 BOM."""
@@ -285,8 +334,8 @@ def _detect_bom_encoding(raw: bytes) -> str | None:
     return None
 
 
-def _bom_matches_content(head: bytes, codec: str) -> bool:
-    """False if *head* starts with the BOM for *codec* but is not in it.
+def _bom_matches_content(raw: bytes, codec: str) -> bool:
+    """False if *raw* starts with the BOM for *codec* but is not in it.
 
     A BOM is two or four bytes that anyone can put in front of a UTF-8 file.
     Decoded as UTF-16, such a file is a run of unrelated CJK characters with
@@ -294,12 +343,15 @@ def _bom_matches_content(head: bytes, codec: str) -> bool:
     BOM still reads the text that is really there.
     """
     if codec.startswith("utf-16"):
-        # Source text is full of ASCII, line breaks included, and in UTF-16
-        # every ASCII character carries a NUL byte.
-        body = head[2:]
-        return not body or b"\x00" in body
+        # Read as UTF-8, real UTF-16 is anything but text: half the bytes of
+        # Latin text are NUL, the high byte of a Cyrillic or Thai letter is
+        # another control, and CJK is mostly invalid. The whole file is
+        # measured, so that neither one NUL nor a block of padding at the
+        # top settles it.
+        body = raw[2:]
+        return not body or not _is_utf8_text(body)
     # UTF-32: every four bytes have to be a code point.
-    body = head[4:]
+    body = raw[4:]
     try:
         body[: len(body) - len(body) % 4].decode(codec)
     except UnicodeDecodeError:
@@ -327,23 +379,36 @@ def _guess_bomless_utf16(head: bytes) -> str | None:
     return None
 
 
-def _other_readings(head: bytes, bom_codec: str | None) -> list[str]:
-    """Encodings to scan a file in besides the one it presents itself as."""
+def _other_readings(raw: bytes, bom_codec: str | None, believed: bool) -> list[tuple[str, int]]:
+    """What to scan a file as besides the encoding it presents itself in.
+
+    Each reading is a codec and the lowest code point to report from it.
+    *believed* says whether the content matches *bom_codec*.
+    """
     if bom_codec is None:
-        guess = _guess_bomless_utf16(head)
-        return [guess] if guess else []
-    if _bom_matches_content(head, bom_codec):
-        return []
+        guess = _guess_bomless_utf16(raw[:_BINARY_CHECK_SIZE])
+        return [(guess, 0)] if guess else []
+    if believed:
+        return [("utf-8", _BELIEVED_BOM_FLOOR)]
     if bom_codec == "utf-32-le":
         # FF FE 00 00 is also the UTF-16 BOM followed by a NUL character.
-        return ["utf-8", "utf-16-le"]
-    return ["utf-8"]
+        return [("utf-8", 0), ("utf-16-le", 0)]
+    return [("utf-8", 0)]
 
 
 def _label_reading(findings: list[Finding], codec: str) -> None:
     """Mark findings as coming from one of several decodings of a file."""
     for finding in findings:
         finding.char_name = f"{finding.char_name} (read as {_ENCODING_LABELS[codec]})"
+
+
+def _is_script(filepath: Path) -> bool:
+    """True if the file starts with ``#!``, which makes it a script whatever it is called."""
+    try:
+        with open(filepath, "rb") as f:
+            return f.read(2) == b"#!"
+    except OSError:
+        return False
 
 
 def _is_known_name(name: str) -> bool:
@@ -373,9 +438,19 @@ class Scanner:
     suppressed: dict[str, int] = field(default_factory=dict, init=False, repr=False, compare=False)
     #: Findings reported from a line whose directive lists no codepoints.
     unlisted: int = field(default=0, init=False, repr=False, compare=False)
+    #: Directories that were not entered because of their name, other than
+    #: version control data and tool caches.
+    skipped_dirs: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
+    #: Files left out because they hold too many control bytes to be text.
+    #: Only a scan without an extension list decides that from the content.
+    binary: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
 
     def scan_text(self, text: str, filename: str = "<string>") -> list[Finding]:
         """Scan a text string for dangerous Unicode. The core primitive."""
+        return self._scan_text(text, filename, 0)
+
+    def _scan_text(self, text: str, filename: str, floor: int) -> list[Finding]:
+        """scan_text(), reporting only code points from *floor* up."""
         findings: list[Finding] = []
         source, package = self._classify_path(filename)
         # Never honor suppression directives in dependency code —
@@ -431,6 +506,8 @@ class Scanner:
             first_emoji_selector = -1
             for match in DANGEROUS_UNICODE_RE.finditer(line):
                 cp = ord(match.group()[0])
+                if cp < floor:
+                    continue
                 # BOM at file start is typically legitimate
                 if cp == 0xFEFF and line_num == 1 and match.start() == 0 and self.allow_bom:
                     continue
@@ -513,12 +590,20 @@ class Scanner:
         # the readings is then noise (two ASCII bytes taken as one UTF-16
         # unit can land on a flagged code point), so each finding says which
         # reading it comes from.
-        others = _other_readings(raw[:_BINARY_CHECK_SIZE], bom_codec)
-        if bom_codec and others:
+        #
+        # A BOM that the content matches is believed, but nothing is staked
+        # on it: what makes it believable is a share of the bytes, and
+        # padding can supply that. Such a file is read as UTF-8 as well. Of
+        # that reading only U+00A0 and up is reported, because below it real
+        # UTF-16 read as UTF-8 is nothing but controls: U+0004 for the high
+        # byte of every Cyrillic letter, a C1 control for the two bytes of
+        # some CJK ones.
+        believed = bom_codec is not None and _bom_matches_content(raw, bom_codec)
+        if bom_codec and not believed:
             _label_reading(findings, bom_codec)
             findings[:0] = self._bom_mismatch(name, bom_codec)
-        for codec in others:
-            reading = self.scan_text(raw.decode(codec, errors="replace"), name)
+        for codec, floor in _other_readings(raw, bom_codec, believed):
+            reading = self._scan_text(raw.decode(codec, errors="replace"), name, floor)
             _label_reading(reading, codec)
             findings.extend(reading)
         return findings
@@ -562,11 +647,15 @@ class Scanner:
             # Filter directories in-place — skip symlinks and excluded dirs.
             # Sorted, here and below, so the report comes out in the same
             # order on every filesystem.
-            dirnames[:] = sorted(
-                d
-                for d in dirnames
-                if d not in effective_skip and not os.path.islink(os.path.join(dirpath, d))
-            )
+            entered = []
+            for d in sorted(dirnames):
+                path = os.path.join(dirpath, d)
+                if d in effective_skip:
+                    if d not in _NEVER_SCANNED_DIRS:
+                        self.skipped_dirs.append(path)
+                elif not os.path.islink(path):
+                    entered.append(d)
+            dirnames[:] = entered
             dp = Path(dirpath)
             # Use restricted extensions for dependency directories
             exts = self._extensions_for_path(dp, effective_exts)
@@ -576,8 +665,14 @@ class Scanner:
                     continue
                 if exts is None:
                     wanted = self.is_text_file(fpath)
+                    if not wanted:
+                        self.binary.append(str(fpath))
+                elif exts is DEP_SCAN_EXTENSIONS:
+                    wanted = self.is_dependency_source(fpath)
                 else:
-                    wanted = fpath.suffix.lower() in exts or _is_known_name(fname)
+                    wanted = (
+                        fpath.suffix.lower() in exts or _is_known_name(fname) or _is_script(fpath)
+                    )
                 if wanted:
                     all_findings.extend(self.scan_file(fpath))
         return all_findings
@@ -591,18 +686,9 @@ class Scanner:
 
     def _effective_skip_dirs(self) -> frozenset[str]:
         if self.scan_deps:
-            # Remove dependency dirs from skip list when scanning deps
-            dep_dirs = {
-                "node_modules",
-                "vendor",
-                "site-packages",
-                ".venv",
-                "venv",
-                "target",  # Rust/Cargo build + deps
-                "build",
-                "dist",  # Common build output dirs nested in deps
-            }
-            return self.skip_dirs - dep_dirs
+            # build/ and dist/ are named for the configuration that skips
+            # them in the project: a package keeps its code in them.
+            return self.skip_dirs - DEPENDENCY_DIRS - {"build", "dist"}
         return self.skip_dirs
 
     def _extensions_for_path(
@@ -624,7 +710,10 @@ class Scanner:
         """Determine if a file is project code or a dependency, and extract package name."""
         parts = filepath.replace("\\", "/").split("/")
         if "node_modules" in parts:
-            idx = parts.index("node_modules")
+            # The last one: pnpm keeps each package in
+            # node_modules/.pnpm/<name>@<version>/node_modules/<name>, and a
+            # nested node_modules holds a package of its own.
+            idx = len(parts) - 1 - parts[::-1].index("node_modules")
             if idx + 1 < len(parts):
                 pkg = parts[idx + 1]
                 # Handle scoped packages: @scope/name
@@ -661,16 +750,33 @@ class Scanner:
         return Scanner._is_source_name(filepath) or not Scanner._is_binary(filepath)
 
     @staticmethod
+    def is_dependency_source(filepath: Path) -> bool:
+        """Whether a file inside a dependency is scanned when there is an extension list.
+
+        Code, by extension or by name, and anything that starts with ``#!``:
+        the scripts a package installs on ``PATH`` seldom have an extension.
+        """
+        return (
+            filepath.suffix.lower() in DEP_SCAN_EXTENSIONS
+            or filepath.name in DEP_SCAN_FILENAMES
+            or _is_known_name(filepath.name)
+            or _is_script(filepath)
+        )
+
+    @staticmethod
     def _is_source_name(filepath: Path) -> bool:
         """True if the name alone marks the file as one heckler scans by default."""
         return filepath.suffix.lower() in DEFAULT_TEXT_EXTENSIONS or _is_known_name(filepath.name)
 
     @staticmethod
     def _is_binary(filepath: Path) -> bool:
-        """Check if a file is binary by looking for null bytes.
+        """Whether the start of a file is too full of control bytes to be text.
 
-        UTF-16 and UTF-32 text is full of them, so a BOM for either counts
-        as text.
+        One NUL does not make a file binary, or a single byte would be
+        enough to opt a script out of the scan. A file that starts with
+        ``#!`` is a script whatever else it holds, since that is how the
+        kernel runs it. UTF-16 and UTF-32 text is full of NUL bytes, so a
+        BOM for either, or the byte pattern of UTF-16, counts as text.
         """
         try:
             with open(filepath, "rb") as f:
@@ -679,7 +785,9 @@ class Scanner:
             # Not known to be binary. scan_file() will fail to read it too,
             # and record that it was not scanned.
             return False
-        return _detect_bom_encoding(chunk) is None and b"\x00" in chunk
+        if chunk.startswith(b"#!") or _detect_bom_encoding(chunk) or _guess_bomless_utf16(chunk):
+            return False
+        return _control_bytes(chunk) * _TEXT_RATIO > len(chunk)
 
 
 def _glob_match(path: str, pattern: str) -> bool:

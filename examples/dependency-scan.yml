@@ -1,0 +1,214 @@
+# Example: scan a project's installed dependencies for invisible Unicode.
+#
+# Copy this file to .github/workflows/ in your own repository. It installs the
+# dependencies named by the lockfile in the repository root into the
+# workspace, scans what was installed, and writes the findings to the job
+# summary.
+#
+# Three things it does on purpose:
+#
+# - It keeps the packages from running code before they are scanned. Install
+#   scripts are off, and Python packages come from wheels only; see the env
+#   block of the install step. One case is left: pip, pipenv and poetry build
+#   a requirement that points at a URL, a path or a git repository whatever
+#   they are told (uv refuses). The job has a read-only token for that reason.
+# - It keeps no cache. The weekly run is there to scan again with a newer
+#   heckler, and with whatever an unpinned requirement resolves to that week.
+#   A result cached per lockfile would hide both.
+# - It fails when there was nothing to scan. A run that found no lockfile, or
+#   whose install left no packages behind, is not a clean result.
+#
+# For another ecosystem, add an install step that puts the packages in
+# vendor/, and add that directory to the `dirs` output.
+
+name: Dependency Unicode Scan
+
+on:
+  # The two lists are the lockfiles the install step knows what to do with.
+  # Keep all three the same; tests/test_examples.py checks that they are.
+  pull_request:
+    paths:
+      - 'package-lock.json'
+      - 'yarn.lock'
+      - 'pnpm-lock.yaml'
+      - 'uv.lock'
+      - 'poetry.lock'
+      - 'Pipfile.lock'
+      - 'requirements*.txt'
+  push:
+    branches: [main, master]
+    paths:
+      - 'package-lock.json'
+      - 'yarn.lock'
+      - 'pnpm-lock.yaml'
+      - 'uv.lock'
+      - 'poetry.lock'
+      - 'Pipfile.lock'
+      - 'requirements*.txt'
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dep-scan:
+    name: Scan dependencies for invisible Unicode
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          # No later step needs the token, so do not leave it in .git/config
+          # next to packages that have not been scanned yet.
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
+        with:
+          python-version: '3.x'
+
+      - name: Install heckler
+        run: pip install heckler
+
+      - name: Install dependencies without running their code
+        id: install
+        env:
+          # Building a source distribution runs code from the package before
+          # it has been scanned, so a package that has no wheel on the index
+          # fails the install. Delete the line for your installer to allow
+          # builds.
+          PIP_ONLY_BINARY: ':all:'               # pip and pipenv
+          POETRY_INSTALLER_ONLY_BINARY: ':all:'  # poetry
+          UV_NO_BUILD: '1'                       # uv
+          # Create the virtualenv in the workspace, which is where the scan
+          # looks. By default poetry and pipenv put it in the home directory.
+          POETRY_VIRTUALENVS_IN_PROJECT: 'true'
+          PIPENV_VENV_IN_PROJECT: '1'
+          # poetry and pipenv would otherwise put a copy of pip in the
+          # virtualenv (and of setuptools, before Python 3.12). Those are the
+          # installer's tools, not dependencies of the project, and the scan
+          # would report what is in them.
+          VIRTUALENV_NO_PIP: '1'
+          VIRTUALENV_NO_SETUPTOOLS: '1'
+        run: |
+          dirs=()
+
+          if [ -f pnpm-lock.yaml ]; then
+            npm install --global pnpm
+            pnpm install --frozen-lockfile --ignore-scripts
+            dirs+=(node_modules)
+          elif [ -f yarn.lock ]; then
+            # With Plug'n'Play, Yarn keeps packages in zip archives and
+            # creates no node_modules; the check below then fails the run.
+            case "$(yarn --version)" in
+              1.*) yarn install --frozen-lockfile --ignore-scripts ;;
+              *) yarn install --immutable --mode=skip-build ;;
+            esac
+            dirs+=(node_modules)
+          elif [ -f package-lock.json ]; then
+            npm ci --ignore-scripts
+            dirs+=(node_modules)
+          fi
+
+          if [ -f uv.lock ]; then
+            pip install uv
+            uv sync --frozen --no-install-project
+            dirs+=(.venv)
+          elif [ -f poetry.lock ]; then
+            pip install poetry
+            poetry install --no-interaction --no-root
+            dirs+=(.venv)
+          elif [ -f Pipfile.lock ]; then
+            pip install pipenv
+            pipenv sync --dev
+            dirs+=(.venv)
+          elif compgen -G 'requirements*.txt' > /dev/null; then
+            # One install for all the files: versions that cannot be
+            # installed together fail here, where one install per file would
+            # replace the earlier versions and leave them unscanned.
+            requirements=()
+            for file in requirements*.txt; do
+              requirements+=(-r "$file")
+            done
+            python -m venv --without-pip .venv
+            pip --python .venv install "${requirements[@]}"
+            dirs+=(.venv)
+          fi
+
+          if [ "${#dirs[@]}" -eq 0 ]; then
+            echo "::error::No lockfile this workflow can install from in the repository root."
+            exit 2
+          fi
+          for dir in "${dirs[@]}"; do
+            if [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then
+              echo "::error::The install left nothing in $dir, so there is nothing to scan."
+              exit 2
+            fi
+          done
+          echo "dirs=${dirs[*]}" >> "$GITHUB_OUTPUT"
+
+      - name: Scan dependencies
+        env:
+          DEP_DIRS: ${{ steps.install.outputs.dirs }}
+        run: |
+          read -ra dirs <<< "$DEP_DIRS"
+          result="$RUNNER_TEMP/heckler-dependencies.json"
+
+          # 0 is clean and 1 is findings. Anything else means heckler could
+          # not scan something, and the step fails with that code.
+          status=0
+          heckler --ci --scan-deps --format json "${dirs[@]}" > "$result" || status=$?
+
+          python3 - "$result" "$status" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          import sys
+
+          path, status = sys.argv[1], int(sys.argv[2])
+          print("## Dependency Unicode Scan\n")
+          if status not in (0, 1):
+              print(f"The scan did not finish: heckler exited with code {status}.")
+              print("The job log names what could not be scanned.")
+              sys.exit(0)
+
+          # A report that cannot be read, or that disagrees with the exit
+          # code, fails the step here. It must not be counted as no findings.
+          try:
+              with open(path, encoding="utf-8") as report:
+                  findings = json.load(report)
+          except ValueError:
+              findings = None
+          if not isinstance(findings, list) or bool(findings) != bool(status):
+              problem = f"heckler exited with code {status}, which its report does not match"
+              print(f"The scan result cannot be used: {problem}.")
+              sys.exit(f"::error::{problem}")
+
+          if not findings:
+              print("No dangerous invisible Unicode characters found in dependencies.")
+              sys.exit(0)
+
+
+          def cell(value):
+              """Keep a value from a package inside one table cell."""
+              text = str(value).replace("\\", "\\\\").replace("|", "\\|")
+              return text.replace("`", "'").replace("\r", " ").replace("\n", " ")
+
+
+          shown = findings[:50]
+          print(f"**{len(findings)} dangerous character(s) found in dependencies.**\n")
+          print("| Package | File | Line | Character | Severity |")
+          print("|---|---|---|---|---|")
+          for f in shown:
+              print(
+                  f"| {cell(f['package'] or '-')} | {cell(f['file'])} | {f['line']}"
+                  f" | {cell(f['codepoint'])} ({cell(f['name'])})"
+                  f" | {cell(f['severity']).upper()} |"
+              )
+          if len(findings) > len(shown):
+              print(f"\nOnly the first {len(shown)} are listed.")
+          PY
+
+          if [ "$status" -ne 0 ]; then
+            echo "::error::heckler exited with code $status; the job summary has the details."
+          fi
+          exit "$status"
