@@ -10,7 +10,7 @@
 
 # Heckler
 
-Zero-dependency Python tool that detects dangerous invisible Unicode characters in source code and dependencies. Language-agnostic source scanning covers 60+ file extensions and well-known extensionless files (Makefile, Dockerfile, etc.) across all major ecosystems. Provides coverage on 4,263 codepoints across 7 threat categories including Glassworm supply chain attacks (Variation Selectors), Trojan Source (bidi controls, CVE-2021-42574), zero-width steganography, tag character injection, control characters, and exotic whitespace.
+Zero-dependency Python tool that detects dangerous invisible Unicode characters in source code and dependencies. Language-agnostic source scanning covers 110+ file extensions and well-known extensionless files (Makefile, Dockerfile, etc.) across all major ecosystems. Provides coverage on 4,263 codepoints across 7 threat categories including Glassworm supply chain attacks (Variation Selectors), Trojan Source (bidi controls, CVE-2021-42574), zero-width steganography, tag character injection, control characters, and exotic whitespace.
 
 ## Install
 
@@ -49,21 +49,25 @@ $ heckler suspect-project/
 Found 6 dangerous character(s): 3 CRITICAL, 1 HIGH, 1 MEDIUM, 1 LOW
 
 suspect-project/api.js
-  12:8   CRITICAL  U+FE01 (VARIATION SELECTOR-2) [GLASSWORM]
-  12:14  CRITICAL  U+FE02 (VARIATION SELECTOR-3) [GLASSWORM]
+  3:18  CRITICAL  U+FE01 (Variation Selector 2) [GLASSWORM]
+  3:19  CRITICAL  U+FE02 (Variation Selector 3) [GLASSWORM]
+      const label = "v2<U+FE01><U+FE02>";
 
 suspect-project/auth.js
-  4:5    CRITICAL  U+202E (RIGHT-TO-LEFT OVERRIDE) [TROJAN-SOURCE]
-  4:32   HIGH      U+202C (POP DIRECTIONAL FORMATTING) [TROJAN-SOURCE]
+  2:25  CRITICAL  U+202E (Right-to-Left Override) [TROJAN-SOURCE]
+  2:31  HIGH  U+202C (Pop Directional Formatting) [TROJAN-SOURCE]
+      const role = "user"; // <U+202E>nimda<U+202C>
 
 suspect-project/config.py
-  9:22   MEDIUM    U+200B (ZERO WIDTH SPACE)
-  18:5   LOW       U+00AD (SOFT HYPHEN)
+  1:11  MEDIUM  U+200B (Zero Width Space)
+      name = "ad<U+200B>min"
+  2:12  LOW  U+00AD (Soft Hyphen)
+      title = "co<U+00AD>operate"
 
 Total: 6 finding(s) across 3 file(s).
 ```
 
-In the text report, the findings on a source line are followed by that line with every invisible character spelled out, for example `const name = "ad<U+200B>min";`. Long lines are cut to a window around the finding.
+In the text report, the findings on a source line are followed by that line with every invisible character spelled out. Long lines are cut to a window around the finding. The example is the tool's real output for a small fixture; a test fails if the two drift apart.
 
 ## What It Detects
 
@@ -91,20 +95,23 @@ heckler --vet PACKAGE [--registry npm|pypi]
 
 | Flag | Description |
 |---|---|
-| `--ci` | Exit code 1 if findings detected |
+| `--ci` | Exit code 1 if findings detected, 2 if something could not be scanned |
 | `--format text\|json\|sarif` | Output format (default: text) |
 | `--severity LEVEL` | Minimum severity to report (default: low) |
 | `--scan-deps` | Include dependency directories |
 | `--diff-only` | With `--scan-deps`, only scan packages changed in staged lockfile diffs |
-| `--allow-unscanned` | With `--diff-only --ci`, do not fail when a changed package is not installed or is installed at a different version |
+| `--allow-unscanned` | Do not fail (exit code 2) over what could not be scanned; it is still named in a warning. See the exit codes below |
+| `--no-suppress` | Ignore `heckler-ignore` comments and report what they hide |
 | `--vet PACKAGE` | Download and scan a package before installing (fetches directly from public registries) |
 | `--registry npm\|pypi` | Package registry for `--vet` (auto-detected if omitted) |
 | `--config PATH` | Path to `.heckler.yml` config file (error if not found) |
 | `--no-color` | Disable colored output |
 | `--quiet` | Only output findings, no summary |
-| `--all-text` | Scan all text files regardless of extension |
+| `--all-text` | Scan all text files regardless of extension, inside dependency directories too |
 
-Exit codes: `0` clean, `1` findings detected (with `--ci`), `2` error, including a changed package that `--diff-only --ci` could not scan.
+Exit codes: `0` clean, `1` findings detected (with `--ci`), `2` error.
+
+Scanning nothing is an error, not a clean result. A path that does not exist exits with 2, as does a missing `--config` file. With `--ci`, so does anything heckler was asked to scan and could not: a file that is unreadable or larger than 50 MB, a directory it cannot list, and, with `--diff-only`, a changed package that is not installed or is installed at another version, a lockfile heckler has no parser for, and a requirements line it cannot read. Each one is named in a warning on stderr. `--allow-unscanned` keeps the warnings and drops the exit code. `--vet` exits with 1 on findings and with 2 when part of the package could not be scanned, with or without `--ci`.
 
 ## Library API
 
@@ -119,6 +126,9 @@ scanner = Scanner(scan_deps=True, severity_threshold=Severity.HIGH)
 findings = scanner.scan_text(some_string, filename="input.js")
 findings = scanner.scan_file(Path("app.js"))
 findings = scanner.scan_path(Path("project/"))
+
+scanner.skipped     # [(path, reason), ...] for files that could not be scanned
+scanner.suppressed  # {path: count} of findings hidden by heckler-ignore comments
 ```
 
 ## Configuration
@@ -127,7 +137,7 @@ Create `.heckler.yml` in your project root:
 
 ```yaml
 severity: medium           # Minimum severity to report
-allow_bom: true            # Treat U+FEFF at file start as INFO (suppressed)
+allow_bom: true            # Do not report a U+FEFF that is the first character of a file
 allow_emoji: true          # Report selectors and joiners inside emoji as INFO
 
 allowlist:                 # Glob patterns for files to skip
@@ -141,69 +151,99 @@ extra_extensions:          # Additional file extensions to scan
   - .custom
 ```
 
-Also reads `[tool.heckler]` from `pyproject.toml`.
+Also reads `[tool.heckler]` from `pyproject.toml`, with the same keys. Python 3.9 and 3.10 have no TOML parser in the standard library; there heckler uses `tomli` if it is installed and otherwise reads the table itself, which covers strings, booleans and arrays of strings. A line it cannot read is named in a warning rather than dropped silently.
 
 Allowlist patterns are globs matched against the file path. `*` and `?` stay within one path segment, `**` spans any number of directories, a pattern without a leading `/` matches at any depth, and a trailing `/` covers everything under that directory. The allowlist also applies to files passed by name, which is how pre-commit runs heckler.
 
-Emoji contain two of the characters heckler looks for: a presentation selector (U+FE0E or U+FE0F) after the character it styles, and a zero width joiner (U+200D) between two emoji. With `allow_emoji: true`, the default, those are reported at INFO, which is below the default threshold, so an emoji in a README or a string literal does not fail the scan. Use `--severity info` to list them. A selector anywhere else, or next to another variation selector, is still CRITICAL, so a run of them hidden behind an emoji is reported in full. Set `allow_emoji: false` to flag every occurrence.
+Emoji contain two of the characters heckler looks for: a presentation selector (U+FE0E or U+FE0F) after the character it styles, and a zero width joiner (U+200D) between two emoji. With `allow_emoji: true`, the default, those are reported at INFO, which is below the default threshold, so an emoji in a README or a string literal does not fail the scan. Use `--severity info` to list them. A selector anywhere else, or next to another variation selector, is still CRITICAL, so a run of them hidden behind an emoji is reported in full. The flags of England, Scotland and Wales are the only emoji built from tag characters (U+1F3F4, five tags, U+E007F); exactly those three sequences are reported at INFO, and every other run of tags stays HIGH. A line with more than 10 presentation selectors inside emoji is reported once, at LOW: each is harmless alone, but the choice of selector across a long row can carry data. Set `allow_emoji: false` to flag every occurrence.
 
 Suppress the next line with a dedicated directive (preferred):
 
 ```javascript
-// heckler-ignore-next-line
+// heckler-ignore-next-line U+FE0F
 const emoji = "\uFE0F";
 
 // heckler-ignore-next-line U+FE0F U+FE0E
-const selectors = "\uFE0F\uFE0E";  // only listed codepoints suppressed
+const selectors = "\uFE0F\uFE0E";  // only the listed code points are suppressed
+
+// heckler-ignore-next-line
+const padded = "\u00A0";           // no list: MEDIUM and below only
 ```
 
 Or suppress inline (legacy, still supported):
 
 ```javascript
-const emoji = "\uFE0F"; // heckler-ignore
+const emoji = "\uFE0F"; // heckler-ignore U+FE0F
 ```
 
 ```python
-emoji = "\uFE0F"  # heckler-ignore
+emoji = "\uFE0F"  # heckler-ignore U+FE0F
 ```
 
-Supported comment tokens: `//`, `#`, `/*`, `--`, `;`. Placing `heckler-ignore` inside a string literal or variable name does **not** suppress detection. Suppression directives are **never honored in dependency code** (node\_modules, vendor, site-packages, target) to prevent malicious packages from hiding attacks.
+A directive that lists code points suppresses exactly those. A directive without a list suppresses findings of MEDIUM severity and below. Bidi controls, variation selectors and tag characters are all HIGH or CRITICAL, so hiding one of them takes a directive that names it.
+
+Supported comment tokens: `//`, `#`, `/*`, `--`, `;`, including runs such as `;;` and `///`. heckler finds directives by pattern; it does not parse the languages it scans. The pattern requires that:
+
+- the directive ends its line, and `heckler-ignore-next-line` is alone on its line;
+- the comment token starts the line or follows a space or tab, and `--` is followed by one;
+- only spaces and tabs separate the parts.
+
+So `heckler-ignore` in a variable name, in the middle of a string, at the end of a URL (`https://example.com/#heckler-ignore`) or as a flag (`--heckler-ignore`) does nothing. What the pattern cannot tell is whether a line that meets these rules is really a comment: a line of a multi-line string that ends in `# heckler-ignore` works as a directive. Three things limit what that can hide:
+
+- a directive without a list never covers HIGH or CRITICAL characters;
+- every run that suppressed something says so on stderr (unless `--quiet`), for example `Note: 3 finding(s) suppressed in 2 file(s) by heckler-ignore comments.`;
+- `--no-suppress` ignores every directive and reports what they hide, which makes a good periodic CI audit.
+
+Suppression directives are **never honored in dependency code** (node\_modules, vendor, site-packages, target) to prevent malicious packages from hiding attacks.
 
 ## Language Support
 
-Source scanning is **language-agnostic** — the regex-based detector works on any text file. Files encoded as UTF-16 or UTF-32 (with BOM) are automatically detected and decoded correctly. Out of the box, heckler scans 60+ file extensions:
+Source scanning is **language-agnostic** — the regex-based detector works on any text file. Out of the box, heckler scans 110+ file extensions:
 
 | Category | Extensions |
 |---|---|
-| Web / JS / TS | `.js`, `.cjs`, `.mjs`, `.ts`, `.jsx`, `.tsx`, `.vue`, `.svelte` |
-| Python | `.py`, `.pyi` |
-| Systems | `.c`, `.cpp`, `.h`, `.hpp`, `.rs`, `.go`, `.zig`, `.nim`, `.d` |
-| JVM | `.java`, `.kt`, `.scala`, `.groovy`, `.clj`, `.cljs`, `.cljc` |
+| Web / JS / TS | `.js`, `.cjs`, `.mjs`, `.ts`, `.mts`, `.cts`, `.jsx`, `.tsx`, `.vue`, `.svelte` |
+| Python | `.py`, `.pyi`, `.pth`, `.ipynb` |
+| Systems | `.c`, `.cc`, `.cpp`, `.h`, `.hh`, `.hpp`, `.rs`, `.go`, `.zig`, `.nim`, `.d`, `.v`, `.asm`, `.s` |
+| JVM | `.java`, `.kt`, `.scala`, `.groovy`, `.clj`, `.cljs`, `.cljc`, `.edn` |
 | .NET | `.cs`, `.vb`, `.vbs` |
 | Functional | `.hs`, `.lhs`, `.ml`, `.mli`, `.elm`, `.ex`, `.exs`, `.erl`, `.hrl`, `.purs`, `.rkt`, `.lisp`, `.cl`, `.el`, `.jl` |
 | Mobile | `.swift`, `.dart`, `.m`, `.mm` |
 | Scripting | `.rb`, `.php`, `.lua`, `.pl`, `.r`, `.tcl`, `.cr` |
+| Other languages | `.ada`, `.adb`, `.ads`, `.f90`, `.f95`, `.f03`, `.pas`, `.pp` |
 | Shell | `.sh`, `.bash`, `.zsh`, `.ps1`, `.bat`, `.cmd`, `.fish` |
-| Config / Data | `.yaml`, `.yml`, `.json`, `.toml`, `.xml`, `.sql`, `.graphql`, `.gql`, `.proto`, `.tf`, `.hcl` |
-| Templates | `.html`, `.css`, `.scss`, `.ejs`, `.hbs`, `.njk`, `.pug`, `.jinja` |
-| Build | `.gradle`, `.rake`, `.cmake`, `.mk` |
+| Config / Data | `.yaml`, `.yml`, `.json`, `.toml`, `.xml`, `.cfg`, `.ini`, `.conf`, `.properties`, `.sql`, `.graphql`, `.gql`, `.proto`, `.tf`, `.hcl` |
+| Templates | `.html`, `.htm`, `.css`, `.scss`, `.ejs`, `.erb`, `.hbs`, `.njk`, `.pug`, `.jinja` |
+| Build | `.gradle`, `.rake`, `.cmake`, `.mk`, `.dockerfile` |
 | Docs | `.md`, `.txt` |
+| Agent instructions | `.mdc` |
 
-Well-known extensionless files are also scanned: `Makefile`, `Dockerfile`, `Gemfile`, `Rakefile`, `Vagrantfile`, `Procfile`, `Justfile`, `BUILD`, `Podfile`, `.gitignore`, `.dockerignore`, and more.
+Well-known files without an extension are also scanned: `Makefile`, `Dockerfile`, `Jenkinsfile`, `Gemfile`, `Rakefile`, `Vagrantfile`, `Procfile`, `Justfile`, `BUILD`, `Podfile`, `.gitignore`, `.dockerignore`, `.env`, `.cursorrules`, `.windsurfrules`, `.clinerules`, and more, along with their dotted variants `Dockerfile.*` and `.env.*` (`Dockerfile.dev`, `.env.example`).
 
-Use `--all-text` to scan every text file regardless of extension.
+Use `--all-text` to scan every text file regardless of extension. That applies inside dependency directories too, where heckler otherwise keeps to a shorter list of source extensions.
+
+Files encoded as UTF-16 or UTF-32 (with BOM) are detected and decoded. A file is read a second way when its bytes disagree with what it announces:
+
+- A UTF-16 or UTF-32 BOM in front of content that is not in that encoding is reported at HIGH, and the file is scanned as UTF-8 as well. Otherwise two bytes in front of an ordinary file would be enough to hide everything in it.
+- A file without a BOM that has a NUL in every other byte is also scanned as UTF-16, so the character is named and not only the NUL bytes around it.
+
+Findings from such a file say which reading they come from, for example `Right-to-Left Override (read as UTF-8)`. A line ends at LF, CRLF or a lone CR, so line numbers match what an editor shows.
 
 ### Dependency / Supply Chain Coverage
 
 | Capability | Supported Ecosystems |
 |---|---|
 | `--vet` (pre-install scan) | npm, PyPI |
-| `--diff-only` (lockfile parsing) | npm, yarn (classic and berry), pnpm (lockfile v5 to v9), pip (`requirements.txt`), pipenv, poetry |
+| `--diff-only` (lockfile parsing) | npm (lockfile v1 to v3), yarn (classic and berry), pnpm (lockfile v5 to v9), pip (`requirements*.txt`), pipenv, poetry |
 | `--scan-deps` (installed deps) | node\_modules, vendor, site-packages, target (Cargo) |
 
-Lockfiles for Cargo, Go, Ruby, and Composer are detected but parsers are not yet implemented — a warning is emitted when using `--diff-only` with these.
+Lockfiles for Cargo, Go, Ruby, and Composer are detected but parsers are not yet implemented. Handed one of these, or a file it does not recognise, `--diff-only` warns and, with `--ci`, fails with exit code 2, because the packages behind it were not scanned. The same goes for a `package-lock.json` with a `lockfileVersion` newer than 3.
+
+In a requirements file, an exact pin (`name==1.2.3`) is checked against the installed version. A bare name, a range (`>=`, `<`, `~=`, ...) or `name @ url` has no version to check, so whatever is installed under that name is scanned. A line that starts like a package name but cannot be read as a requirement, such as a bare URL, counts as unscanned.
 
 `--diff-only` scans the installed copy of each package that was added or bumped in the lockfile, so the dependencies have to be installed first. Node packages are looked up in `node_modules`, including pnpm's virtual store. Python packages are looked up in a virtualenv next to the lockfile or in the working directory (`.venv`, `venv`, `env`), then in the environment heckler runs in, then in the other interpreters on `PATH`, which is where an activated virtualenv is found when heckler runs under pre-commit. When the lockfile names a version, the installed copy has to be that version. With `--ci`, a changed package that is missing or installed at another version fails the run with exit code 2 and is named in the output; `--allow-unscanned` turns that back into a warning.
+
+`--vet` scans everything the registry offers for the version: the one tarball of an npm package, and for PyPI the sdist and every wheel, since which of them `pip` installs depends on the platform and nothing makes their contents agree. Inside each archive every text file is scanned, whatever its extension, which covers `bin` scripts without one and `.pth` files. The `[VET]` header names the files that were scanned, and a file that could not be unpacked or read makes the result `INCOMPLETE` (exit code 2) rather than `CLEAN`.
 
 > **Private registries:** `--vet` fetches packages directly from the public npm and PyPI registries (`registry.npmjs.org`, `pypi.org`) using only Python's stdlib — it does **not** shell out to `npm` or `pip` and does **not** execute any package code during download. This means private or corporate registries are not supported by `--vet`. If you need to scan packages from a private registry, download them manually and use `heckler <path>` to scan the extracted source.
 
@@ -267,7 +307,7 @@ bash scripts/heckler-scan.sh [directory]
 
 Requires GNU grep with PCRE support (`grep -P`). macOS users: `brew install grep`.
 
-The script looks for the same characters the Python scanner reports by default; a test keeps the two lists equal. It has no severities, allowlist or suppression comments, and it cannot tell the variation selector in an emoji from a hidden one, so it flags both.
+The script looks for the same characters the Python scanner reports by default, in the same files: its file list is generated from the scanner's (`python scripts/sync_shell_includes.py`), and tests keep both lists equal. It has no severities, allowlist or suppression comments, it matches file names case-sensitively (`script.R` is not picked up), and it cannot tell the variation selector in an emoji from a hidden one, so it flags both.
 
 ## Testing
 

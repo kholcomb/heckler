@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .characters import (
     DANGEROUS_UNICODE_RE,
+    PRESENTATION_SELECTORS,
     CharInfo,
     Severity,
     ThreatCategory,
@@ -64,21 +65,24 @@ class Finding:
 # fmt: off
 DEFAULT_TEXT_EXTENSIONS = frozenset({
     # Core web / scripting
-    '.js', '.cjs', '.mjs', '.ts', '.jsx', '.tsx', '.py', '.pyi', '.rb', '.go',
-    '.rs', '.c', '.cpp', '.h', '.hpp', '.java', '.cs', '.php', '.sh', '.bash',
-    '.zsh', '.yaml', '.yml', '.json', '.toml', '.xml', '.html', '.css', '.scss',
-    '.sql', '.swift', '.kt', '.scala', '.lua', '.pl', '.r', '.md', '.txt',
-    '.cfg', '.ini', '.dockerfile', '.tf', '.hcl', '.vue', '.svelte',
+    '.js', '.cjs', '.mjs', '.ts', '.mts', '.cts', '.jsx', '.tsx', '.py', '.pyi',
+    '.pth', '.rb', '.go', '.rs', '.c', '.cc', '.cpp', '.h', '.hh', '.hpp',
+    '.java', '.cs', '.php', '.sh', '.bash', '.zsh', '.yaml', '.yml', '.json',
+    '.toml', '.xml', '.html', '.htm', '.css', '.scss', '.sql', '.swift', '.kt',
+    '.scala', '.lua', '.pl', '.r', '.md', '.txt', '.cfg', '.ini', '.dockerfile',
+    '.tf', '.hcl', '.vue', '.svelte', '.ipynb',
     # Shells
     '.ps1', '.bat', '.cmd', '.fish',
     # Templates
-    '.ejs', '.hbs', '.njk', '.pug', '.jinja',
+    '.ejs', '.erb', '.hbs', '.njk', '.pug', '.jinja',
+    # Instructions for coding agents
+    '.mdc',
     # Build systems
     '.gradle', '.rake', '.cmake', '.mk',
     # Schema/IDL
     '.graphql', '.gql', '.proto',
-    # Config
-    '.env.example', '.conf', '.properties',
+    # Config ('.env' and '.env.*' are matched by name, below)
+    '.conf', '.properties',
     # Modern / additional languages
     '.dart',                                      # Dart / Flutter
     '.ex', '.exs',                                # Elixir
@@ -109,7 +113,7 @@ DEFAULT_TEXT_EXTENSIONS = frozenset({
 # Well-known files without extensions that should be scanned
 KNOWN_FILENAMES = frozenset({
     'Makefile', 'GNUmakefile', 'makefile',
-    'Dockerfile',
+    'Dockerfile', 'Jenkinsfile',
     'Gemfile', 'Rakefile',
     'Vagrantfile',
     'Brewfile',
@@ -128,7 +132,14 @@ KNOWN_FILENAMES = frozenset({
     '.gitattributes', '.gitignore', '.gitmodules',
     '.dockerignore', '.npmignore', '.eslintrc',
     '.babelrc', '.prettierrc',
+    '.env',
+    '.cursorrules', '.windsurfrules', '.clinerules',  # instructions for coding agents
 })
+
+# Names that carry their variant after a dot: Dockerfile.dev, .env.example.
+# Path.suffix is '.dev' and '.example' for those, so no extension list can
+# name them.
+KNOWN_FILENAME_PREFIXES = ('Dockerfile.', '.env.')
 
 DEFAULT_SKIP_DIRS = frozenset({
     'node_modules', 'vendor', '.git', '__pycache__', '.venv', 'venv',
@@ -140,9 +151,10 @@ DEFAULT_SKIP_DIRS = frozenset({
 # or be imported as code. Broader than just "executable" to cover compiled
 # language ecosystems (Rust, Go, Java, etc.) where deps contain source.
 DEP_SCAN_EXTENSIONS = frozenset({
-    '.js', '.cjs', '.mjs', '.ts', '.jsx', '.tsx',  # JavaScript/TypeScript
-    '.py', '.pyi',                                   # Python
-    '.sh', '.bash',                                  # Shell
+    '.js', '.cjs', '.mjs', '.ts', '.mts', '.cts',  # JavaScript/TypeScript
+    '.jsx', '.tsx', '.vue', '.svelte',
+    '.py', '.pyi', '.pth',                           # Python (.pth runs at startup)
+    '.sh', '.bash', '.ps1', '.bat',                  # Shell
     '.rb',                                            # Ruby
     '.php',                                           # PHP
     '.go',                                            # Go
@@ -151,7 +163,7 @@ DEP_SCAN_EXTENSIONS = frozenset({
     '.java', '.kt', '.scala', '.groovy',             # JVM
     '.cs',                                            # C# / .NET
     '.swift',                                         # Swift
-    '.c', '.cpp', '.h', '.hpp',                      # C/C++
+    '.c', '.cc', '.cpp', '.h', '.hh', '.hpp',        # C/C++
     '.lua',                                           # Lua
     '.dart',                                          # Dart
     '.ex', '.exs',                                    # Elixir
@@ -169,39 +181,69 @@ DEP_SCAN_EXTENSIONS = frozenset({
 
 IGNORE_COMMENT = "heckler-ignore"
 
+# Directives are found by pattern; heckler does not parse the 60-odd languages
+# it scans. Three rules keep text that only looks like a directive from
+# working as one:
+#
+# - The comment opener starts the line or follows a space or tab, and "--"
+#   is followed by one. That rules out the "#heckler-ignore" fragment of a
+#   URL, a "--heckler-ignore" command-line flag and "a;heckler-ignore".
+# - Only spaces and tabs may separate the parts. "\s" would also accept the
+#   no-break and other exotic spaces heckler exists to report.
+# - The directive ends the line.
+#
+# A run of the opening character is accepted, so ";;", "##", "///" and "/**"
+# comments work.
+_COMMENT_OPEN = r"(?<![^ \t])(?://+[ \t]*|#+[ \t]*|/\*+[ \t]*|;+[ \t]*|--[ \t]+)"
+_DIRECTIVE_TAIL = r"(?:[ \t]+((?:U\+[0-9A-Fa-f]{4,6}[ \t]*)+))?[ \t]*(?:\*/[ \t]*)?$"
+
 # Next-line suppression directive with optional codepoint list.
 # Must appear on its own line (only whitespace + comment token before it).
 # Format:  // heckler-ignore-next-line [U+XXXX U+YYYY ...]
 #          # heckler-ignore-next-line U+FE0F
-# The codepoints listed are the ONLY ones suppressed on the next line.
-# If no codepoints are listed, all findings on the next line are suppressed.
+# The codepoints listed are suppressed on the next line whatever their
+# severity. Without a list, the directive covers MEDIUM and below only.
 _IGNORE_NEXT_LINE_RE = re.compile(
-    r"^\s*(?://|#|/\*|--|;)\s*heckler-ignore-next-line"
-    r"(?:\s+((?:U\+[0-9A-Fa-f]{4,6}\s*)+))?"
-    r"\s*(?:\*/\s*)?$"
+    r"^[ \t]*" + _COMMENT_OPEN + "heckler-ignore-next-line" + _DIRECTIVE_TAIL
 )
 
 # Legacy inline directive (end-of-line anchor prevents mid-string injection).
 # Deprecated in favor of heckler-ignore-next-line but still supported for
 # project code. Never honored in dependency code.
-_IGNORE_INLINE_RE = re.compile(
-    r"(?://|#|/\*|--|;)\s*heckler-ignore"
-    r"(?:\s+((?:U\+[0-9A-Fa-f]{4,6}\s*)+))?"
-    r"\s*(?:\*/\s*)?$"
-)
+_IGNORE_INLINE_RE = re.compile(_COMMENT_OPEN + "heckler-ignore" + _DIRECTIVE_TAIL)
 
 _CODEPOINT_RE = re.compile(r"U\+([0-9A-Fa-f]{4,6})")
+
+# What a directive without a codepoint list may suppress. The characters
+# behind Trojan Source, Glassworm and tag smuggling are all rated above this,
+# so hiding one of them takes a directive that names it.
+_BARE_DIRECTIVE_MAX = Severity.MEDIUM
 
 
 def _parse_suppressed_codepoints(directive_match: re.Match[str]) -> frozenset[int] | None:
     """Extract codepoints from a suppression directive.
 
-    Returns a frozenset of codepoint ints, or None meaning "suppress all".
+    Returns a frozenset of codepoint ints, or None for a directive without a
+    list, which covers every finding up to ``_BARE_DIRECTIVE_MAX``.
     """
     cp_str = directive_match.group(1)
     if not cp_str:
-        return None  # no codepoints listed → suppress all
+        return None  # no codepoints listed
     return frozenset(int(m.group(1), 16) for m in _CODEPOINT_RE.finditer(cp_str))
+
+
+# str.splitlines() is not used: it also breaks on U+2028, U+2029 and a few
+# control characters, consuming them before the regex can report them. CR on
+# its own is a line break here, as it is in every editor; otherwise a file
+# with CR-only line endings is one long line and a directive at its end
+# would cover all of it.
+_LINE_BREAK_RE = re.compile(r"\r\n|\r|\n")
+
+# More presentation selectors than this on one line are reported once, at
+# LOW. Each sits inside a well-formed emoji and is INFO by itself, but the
+# choice between U+FE0E, U+FE0F and neither can carry data across a row of
+# them.
+_MAX_EMOJI_SELECTORS_PER_LINE = 10
 
 
 _BINARY_CHECK_SIZE = 8192
@@ -211,8 +253,9 @@ _BINARY_CHECK_SIZE = 8192
 # turning into millions of findings.
 _MAX_FINDINGS_PER_FILE = 10_000
 
-# Maximum file size to scan (50 MB). Files larger than this are skipped to
-# prevent memory exhaustion from adversarially large inputs.
+# Maximum file size to scan (50 MB). A larger file is not read, to prevent
+# memory exhaustion from adversarially large inputs. It is recorded in
+# Scanner.skipped, because a file nobody looked at is not a clean one.
 _MAX_SCAN_FILE_SIZE = 50 * 1024 * 1024
 
 # BOM signatures ordered longest-first so UTF-32 is checked before UTF-16.
@@ -223,6 +266,16 @@ _BOM_TABLE: list[tuple[bytes, str]] = [
     (b"\xfe\xff", "utf-16-be"),
 ]
 
+_ENCODING_LABELS = {
+    "utf-8": "UTF-8",
+    "utf-16-le": "UTF-16 LE",
+    "utf-16-be": "UTF-16 BE",
+    "utf-32-le": "UTF-32 LE",
+    "utf-32-be": "UTF-32 BE",
+}
+
+_NOTHING: frozenset[int] = frozenset()
+
 
 def _detect_bom_encoding(raw: bytes) -> str | None:
     """Return the codec name if *raw* starts with a UTF-16/32 BOM."""
@@ -230,6 +283,72 @@ def _detect_bom_encoding(raw: bytes) -> str | None:
         if raw[: len(sig)] == sig:
             return codec
     return None
+
+
+def _bom_matches_content(head: bytes, codec: str) -> bool:
+    """False if *head* starts with the BOM for *codec* but is not in it.
+
+    A BOM is two or four bytes that anyone can put in front of a UTF-8 file.
+    Decoded as UTF-16, such a file is a run of unrelated CJK characters with
+    nothing to report in it, while every tool that ignores or rejects the
+    BOM still reads the text that is really there.
+    """
+    if codec.startswith("utf-16"):
+        # Source text is full of ASCII, line breaks included, and in UTF-16
+        # every ASCII character carries a NUL byte.
+        body = head[2:]
+        return not body or b"\x00" in body
+    # UTF-32: every four bytes have to be a code point.
+    body = head[4:]
+    try:
+        body[: len(body) - len(body) % 4].decode(codec)
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+def _guess_bomless_utf16(head: bytes) -> str | None:
+    """Return a UTF-16 codec if *head* looks like UTF-16 text without a BOM.
+
+    ASCII in UTF-16 has a NUL in every other byte: the second of each pair
+    in little-endian order, the first in big-endian. A quarter of the pairs
+    is enough to call it, provided the other byte of a pair is almost never
+    NUL. A stray NUL or two in a UTF-8 file is far below that.
+    """
+    pairs = len(head) // 2
+    if pairs < 2:
+        return None
+    first = head[0 : pairs * 2 : 2].count(0)
+    second = head[1 : pairs * 2 : 2].count(0)
+    if second * 4 >= pairs and first * 8 <= second:
+        return "utf-16-le"
+    if first * 4 >= pairs and second * 8 <= first:
+        return "utf-16-be"
+    return None
+
+
+def _other_readings(head: bytes, bom_codec: str | None) -> list[str]:
+    """Encodings to scan a file in besides the one it presents itself as."""
+    if bom_codec is None:
+        guess = _guess_bomless_utf16(head)
+        return [guess] if guess else []
+    if _bom_matches_content(head, bom_codec):
+        return []
+    if bom_codec == "utf-32-le":
+        # FF FE 00 00 is also the UTF-16 BOM followed by a NUL character.
+        return ["utf-8", "utf-16-le"]
+    return ["utf-8"]
+
+
+def _label_reading(findings: list[Finding], codec: str) -> None:
+    """Mark findings as coming from one of several decodings of a file."""
+    for finding in findings:
+        finding.char_name = f"{finding.char_name} (read as {_ENCODING_LABELS[codec]})"
+
+
+def _is_known_name(name: str) -> bool:
+    """True for a file name that is scanned whatever its extension."""
+    return name in KNOWN_FILENAMES or name.startswith(KNOWN_FILENAME_PREFIXES)
 
 
 @dataclass
@@ -242,42 +361,74 @@ class Scanner:
     scan_deps: bool = False
     diff_only: bool = False
     allow_emoji: bool = True
+    # False ignores heckler-ignore directives, to list what they are hiding.
+    honor_directives: bool = True
+
+    # What the scans so far left out or held back, for the caller to report.
+    #: ``(path, reason)`` for each file or directory that could not be scanned.
+    skipped: list[tuple[str, str]] = field(
+        default_factory=list, init=False, repr=False, compare=False
+    )
+    #: Number of findings a directive suppressed, by file.
+    suppressed: dict[str, int] = field(default_factory=dict, init=False, repr=False, compare=False)
+    #: Findings reported from a line whose directive lists no codepoints.
+    unlisted: int = field(default=0, init=False, repr=False, compare=False)
 
     def scan_text(self, text: str, filename: str = "<string>") -> list[Finding]:
         """Scan a text string for dangerous Unicode. The core primitive."""
         findings: list[Finding] = []
         source, package = self._classify_path(filename)
-        is_dependency = source == "dependency" or self.scan_deps
-
-        # Use split('\n') instead of splitlines() — splitlines() treats
-        # U+2028/U+2029 as line terminators, consuming them before the regex
-        # can detect them.
-        lines = text.split("\n")
-        # Suppressed codepoints for the next line (from heckler-ignore-next-line).
-        # None means "suppress all", a frozenset means "suppress only these".
-        _NO_SUPPRESS: frozenset[int] = frozenset()
-        next_line_suppress: frozenset[int] | None = _NO_SUPPRESS
+        # Never honor suppression directives in dependency code —
+        # a malicious package author could embed them to hide attacks.
+        honor = self.honor_directives and source != "dependency" and not self.scan_deps
         nul_seen = False
 
-        for line_num, line in enumerate(lines, 1):
-            # Determine suppression for this line
-            suppress: frozenset[int] | None = next_line_suppress
-            next_line_suppress = _NO_SUPPRESS
+        # What a directive covers on the current line: the codepoints it
+        # lists and, if it lists none, everything up to _BARE_DIRECTIVE_MAX.
+        bare, listed = False, _NOTHING
+        next_bare, next_listed = False, _NOTHING
+        line_num, line = 0, ""
 
-            # Never honor suppression directives in dependency code —
-            # a malicious package author could embed them to hide attacks.
-            if not is_dependency:
-                # Check for next-line directive (applies to the NEXT line)
-                nl_match = _IGNORE_NEXT_LINE_RE.match(line)
-                if nl_match:
-                    next_line_suppress = _parse_suppressed_codepoints(nl_match)
-                    continue  # directive line itself is not scanned
+        def report(col: int, cp: int, info: CharInfo) -> None:
+            if not info.severity >= self.severity_threshold:
+                return
+            if cp in listed or (bare and info.severity <= _BARE_DIRECTIVE_MAX):
+                self.suppressed[filename] = self.suppressed.get(filename, 0) + 1
+                return
+            if bare:
+                self.unlisted += 1
+            findings.append(
+                Finding.from_match(
+                    filepath=filename,
+                    line_num=line_num,
+                    col=col + 1,
+                    cp=cp,
+                    info=info,
+                    line_content=line,
+                    source=source,
+                    package=package,
+                )
+            )
 
-                # Legacy inline directive (end-of-line anchored)
-                inline_match = _IGNORE_INLINE_RE.search(line)
-                if inline_match:
-                    suppress = _parse_suppressed_codepoints(inline_match)
+        for line_num, line in enumerate(_LINE_BREAK_RE.split(text), 1):
+            bare, listed = next_bare, next_listed
+            next_bare, next_listed = False, _NOTHING
+            if honor:
+                directive = _IGNORE_NEXT_LINE_RE.match(line)
+                if directive:
+                    # Covers the next line. This one is scanned like any other.
+                    codepoints = _parse_suppressed_codepoints(directive)
+                    next_bare, next_listed = codepoints is None, codepoints or _NOTHING
+                else:
+                    # Legacy inline directive (end-of-line anchored)
+                    directive = _IGNORE_INLINE_RE.search(line)
+                    if directive:
+                        codepoints = _parse_suppressed_codepoints(directive)
+                        bare = bare or codepoints is None
+                        listed = listed | (codepoints or _NOTHING)
 
+            emoji_selectors = 0
+            first_emoji_selector = -1
             for match in DANGEROUS_UNICODE_RE.finditer(line):
                 cp = ord(match.group()[0])
                 # BOM at file start is typically legitimate
@@ -288,65 +439,102 @@ class Scanner:
                     if nul_seen:
                         continue
                     nul_seen = True
-                # Check suppression: None = all, non-empty frozenset = specific
-                if suppress is None or cp in suppress:
-                    continue
                 info = get_char_info(cp)
                 if self.allow_emoji and is_emoji_context(line, match.start()):
                     # Part of a well-formed emoji. Still reported, but at
                     # INFO, which is below every default threshold.
                     info = CharInfo(f"{info.name} (in emoji)", info.category, Severity.INFO)
-                if info.severity >= self.severity_threshold:
-                    findings.append(
-                        Finding.from_match(
-                            filepath=filename,
-                            line_num=line_num,
-                            col=match.start() + 1,
-                            cp=cp,
-                            info=info,
-                            line_content=line,
-                            source=source,
-                            package=package,
-                        )
-                    )
-                    if len(findings) >= _MAX_FINDINGS_PER_FILE:
-                        print(
-                            f"Warning: {filename}: stopped after {_MAX_FINDINGS_PER_FILE}"
-                            " findings; the rest of the file was not scanned.",
-                            file=sys.stderr,
-                        )
-                        return findings
+                    if cp in PRESENTATION_SELECTORS:
+                        if not emoji_selectors:
+                            first_emoji_selector = match.start()
+                        emoji_selectors += 1
+                report(match.start(), cp, info)
+                if len(findings) >= _MAX_FINDINGS_PER_FILE:
+                    return self._stopped_early(findings, filename)
+
+            if emoji_selectors > _MAX_EMOJI_SELECTORS_PER_LINE:
+                report(
+                    first_emoji_selector,
+                    ord(line[first_emoji_selector]),
+                    CharInfo(
+                        f"{emoji_selectors} emoji presentation selectors on one line",
+                        ThreatCategory.VARIATION_SELECTOR,
+                        Severity.LOW,
+                    ),
+                )
+                if len(findings) >= _MAX_FINDINGS_PER_FILE:
+                    return self._stopped_early(findings, filename)
+        return findings
+
+    @staticmethod
+    def _stopped_early(findings: list[Finding], filename: str) -> list[Finding]:
+        print(
+            f"Warning: {filename}: stopped after {_MAX_FINDINGS_PER_FILE}"
+            " findings; the rest of the file was not scanned.",
+            file=sys.stderr,
+        )
         return findings
 
     def scan_file(self, filepath: Path) -> list[Finding]:
-        """Read a file and scan its contents."""
+        """Read a file and scan its contents.
+
+        A file that cannot be read, or is too large to, yields no findings
+        and is recorded in ``skipped``.
+        """
+        name = str(filepath)
         try:
             size = filepath.stat().st_size
             if size > _MAX_SCAN_FILE_SIZE:
+                limit = _MAX_SCAN_FILE_SIZE // (1024 * 1024)
+                self.skipped.append((name, f"it is larger than {limit} MB"))
                 return []
             raw = filepath.read_bytes()
-        except (OSError, PermissionError):
+        except OSError as e:
+            self.skipped.append((name, f"it could not be read ({e.strerror or e})"))
             return []
 
         # Detect non-UTF-8 encodings via BOM signatures.  UTF-16/32 files
         # contain embedded null bytes that would otherwise cause the scanner
         # to treat them as binary and skip the content entirely — an attacker
         # could exploit this by committing a UTF-16 encoded file.
-        encoding = _detect_bom_encoding(raw)
-        if encoding:
-            try:
-                text = raw.decode(encoding, errors="replace")
-                return self.scan_text(text, str(filepath))
-            except Exception:
-                return []
+        #
+        # Without a BOM the file is read as UTF-8. A NUL byte does not end
+        # the scan: JavaScript accepts one inside a comment, PHP before its
+        # opening tag, and bash after the first line, so stopping there
+        # would let a single byte hide everything that follows it. Whether a
+        # file is worth scanning at all is decided by the caller, from its
+        # name.
+        bom_codec = _detect_bom_encoding(raw)
+        findings = self.scan_text(raw.decode(bom_codec or "utf-8", errors="replace"), name)
 
-        # UTF-8 path. A NUL byte does not end the scan: JavaScript accepts
-        # one inside a comment, PHP before its opening tag, and bash after
-        # the first line, so stopping there would let a single byte hide
-        # everything that follows it. Whether a file is worth scanning at all
-        # is decided by the caller, from its name.
-        text = raw.decode("utf-8", errors="replace")
-        return self.scan_text(text, str(filepath))
+        # The encoding a file announces is not always the one it is in: a
+        # BOM in front of UTF-8 text, or UTF-16 text with no BOM. Scan the
+        # other reading too, so that neither can hide the characters. One of
+        # the readings is then noise (two ASCII bytes taken as one UTF-16
+        # unit can land on a flagged code point), so each finding says which
+        # reading it comes from.
+        others = _other_readings(raw[:_BINARY_CHECK_SIZE], bom_codec)
+        if bom_codec and others:
+            _label_reading(findings, bom_codec)
+            findings[:0] = self._bom_mismatch(name, bom_codec)
+        for codec in others:
+            reading = self.scan_text(raw.decode(codec, errors="replace"), name)
+            _label_reading(reading, codec)
+            findings.extend(reading)
+        return findings
+
+    def _bom_mismatch(self, filename: str, codec: str) -> list[Finding]:
+        """The finding for a byte order mark that the content does not match."""
+        family = _ENCODING_LABELS[codec].split()[0]
+        info = CharInfo(
+            f"Byte order mark for {family} on a file that is not {family}",
+            ThreatCategory.ZERO_WIDTH,
+            Severity.HIGH,
+        )
+        if not info.severity >= self.severity_threshold:
+            return []
+        source, package = self._classify_path(filename)
+        return [Finding.from_match(filename, 1, 1, 0xFEFF, info, "", source, package)]
 
     def scan_path(self, root: Path) -> list[Finding]:
         """Recursively scan a directory or single file."""
@@ -357,37 +545,40 @@ class Scanner:
             if self._is_excluded(root):
                 return []
             return self.scan_file(root)
+        if not root.is_dir():
+            reason = "it is not a file or a directory" if root.exists() else "it does not exist"
+            self.skipped.append((str(root), reason))
+            return []
 
         all_findings: list[Finding] = []
         effective_skip = self._effective_skip_dirs()
         effective_exts = self.text_extensions
 
-        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-            # Filter directories in-place — skip symlinks and excluded dirs
-            dirnames[:] = [
+        def unreadable(error: OSError) -> None:
+            reason = f"the directory could not be read ({error.strerror or error})"
+            self.skipped.append((str(error.filename or root), reason))
+
+        for dirpath, dirnames, filenames in os.walk(root, onerror=unreadable, followlinks=False):
+            # Filter directories in-place — skip symlinks and excluded dirs.
+            # Sorted, here and below, so the report comes out in the same
+            # order on every filesystem.
+            dirnames[:] = sorted(
                 d
                 for d in dirnames
                 if d not in effective_skip and not os.path.islink(os.path.join(dirpath, d))
-            ]
+            )
             dp = Path(dirpath)
             # Use restricted extensions for dependency directories
             exts = self._extensions_for_path(dp, effective_exts)
-            for fname in filenames:
+            for fname in sorted(filenames):
                 fpath = dp / fname
                 if os.path.islink(fpath) or self._is_excluded(fpath):
                     continue
-                has_ext = bool(fpath.suffix)
                 if exts is None:
-                    # Scanning everything: with no extension filter, content
-                    # is the only way to leave out images, archives and the
-                    # like. A recognised source name is always scanned, so a
-                    # NUL byte cannot be used to opt such a file out.
-                    if self._is_source_name(fpath) or not self._is_binary(fpath):
-                        all_findings.extend(self.scan_file(fpath))
-                    continue
-                ext_match = has_ext and fpath.suffix.lower() in exts
-                name_match = not has_ext and fname in KNOWN_FILENAMES
-                if ext_match or name_match:
+                    wanted = self.is_text_file(fpath)
+                else:
+                    wanted = fpath.suffix.lower() in exts or _is_known_name(fname)
+                if wanted:
                     all_findings.extend(self.scan_file(fpath))
         return all_findings
 
@@ -420,6 +611,9 @@ class Scanner:
         default_exts: frozenset[str] | None,
     ) -> frozenset[str] | None:
         """Use restricted extensions inside dependency directories."""
+        if default_exts is None:
+            # --all-text means every text file, in a dependency as elsewhere.
+            return None
         parts = set(dirpath.parts)
         dep_markers = {"node_modules", "vendor", "site-packages", "target"}
         if parts & dep_markers:
@@ -457,11 +651,19 @@ class Scanner:
         return any(_glob_match(fp_str, pattern) for pattern in self.exclude_patterns)
 
     @staticmethod
+    def is_text_file(filepath: Path) -> bool:
+        """Whether a file is scanned when there is no extension list to go by.
+
+        Content is then the only way to leave out images, archives and the
+        like. A recognised source name is always scanned, so a NUL byte
+        cannot be used to opt such a file out.
+        """
+        return Scanner._is_source_name(filepath) or not Scanner._is_binary(filepath)
+
+    @staticmethod
     def _is_source_name(filepath: Path) -> bool:
         """True if the name alone marks the file as one heckler scans by default."""
-        return (
-            filepath.suffix.lower() in DEFAULT_TEXT_EXTENSIONS or filepath.name in KNOWN_FILENAMES
-        )
+        return filepath.suffix.lower() in DEFAULT_TEXT_EXTENSIONS or _is_known_name(filepath.name)
 
     @staticmethod
     def _is_binary(filepath: Path) -> bool:
@@ -473,8 +675,10 @@ class Scanner:
         try:
             with open(filepath, "rb") as f:
                 chunk = f.read(_BINARY_CHECK_SIZE)
-        except (OSError, PermissionError):
-            return True
+        except OSError:
+            # Not known to be binary. scan_file() will fail to read it too,
+            # and record that it was not scanned.
+            return False
         return _detect_bom_encoding(chunk) is None and b"\x00" in chunk
 
 

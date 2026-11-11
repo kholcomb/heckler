@@ -32,7 +32,7 @@ class TestScanText:
 
     def test_inline_ignore(self) -> None:
         scanner = Scanner()
-        text = 'const x = "\ufe01"; // heckler-ignore\n'
+        text = 'const x = "\ufe01"; // heckler-ignore U+FE01\n'
         findings = scanner.scan_text(text)
         assert findings == []
 

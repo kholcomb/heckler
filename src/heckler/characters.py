@@ -337,8 +337,20 @@ _EMOJI_BASE_RANGES: tuple[tuple[int, int], ...] = (
 # fmt: on
 _KEYCAP_BASES = frozenset("0123456789#*")
 _COMBINING_ENCLOSING_KEYCAP = "\u20e3"
-_PRESENTATION_SELECTORS = frozenset({0xFE0E, 0xFE0F})
+PRESENTATION_SELECTORS = frozenset({0xFE0E, 0xFE0F})
 _ZERO_WIDTH_JOINER = 0x200D
+
+# The flags of England, Scotland and Wales: a black flag, the region code
+# spelled in tag characters, and a cancel tag. Unicode's emoji-sequences.txt
+# lists these three and no other tag sequence as recommended for general
+# interchange, so nothing else that is built from tags counts as an emoji.
+_BLACK_FLAG = "\U0001f3f4"
+_CANCEL_TAG = 0xE007F
+_SUBDIVISION_FLAGS = frozenset(
+    _BLACK_FLAG + "".join(chr(0xE0000 + ord(ch)) for ch in region) + chr(_CANCEL_TAG)
+    for region in ("gbeng", "gbsct", "gbwls")
+)
+_SUBDIVISION_FLAG_LENGTH = 7
 
 
 def _is_emoji_base(ch: str) -> bool:
@@ -356,7 +368,7 @@ def _is_variation_selector(ch: str) -> bool:
 def is_emoji_context(text: str, index: int) -> bool:
     """True if the character at *index* is an ordinary part of an emoji.
 
-    Well-formed emoji contain two of the characters heckler flags:
+    Well-formed emoji contain three of the kinds of character heckler flags:
 
     - U+FE0E and U+FE0F, the text and emoji presentation selectors, directly
       after the character they style (U+26A0 U+FE0F is the warning sign), or
@@ -365,6 +377,10 @@ def is_emoji_context(text: str, index: int) -> bool:
       them is reported in full.
     - U+200D, the zero width joiner, between two emoji, as in the family,
       profession and flag sequences.
+    - Tag characters, in the flags of England, Scotland and Wales and nowhere
+      else. A tag qualifies only as part of one of those three sequences,
+      complete and directly after U+1F3F4; any other run of tags, including
+      one that follows such a flag, is reported in full.
 
     Glassworm hides its payload in long runs of selectors with nothing
     visible between them; one selector after a visible pictograph cannot
@@ -374,7 +390,14 @@ def is_emoji_context(text: str, index: int) -> bool:
     prev = text[index - 1] if index > 0 else ""
     nxt = text[index + 1] if index + 1 < len(text) else ""
 
-    if cp in _PRESENTATION_SELECTORS:
+    if 0xE0020 <= cp <= _CANCEL_TAG:
+        # The flag, if there is one, starts at most six characters back.
+        for start in range(index - 1, max(index - _SUBDIVISION_FLAG_LENGTH, -1), -1):
+            if text[start] == _BLACK_FLAG:
+                return text[start : start + _SUBDIVISION_FLAG_LENGTH] in _SUBDIVISION_FLAGS
+        return False
+
+    if cp in PRESENTATION_SELECTORS:
         if nxt and _is_variation_selector(nxt):
             return False
         if prev in _KEYCAP_BASES:

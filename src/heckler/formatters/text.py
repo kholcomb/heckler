@@ -46,6 +46,14 @@ def _spell_out(ch: str) -> str:
     return ch
 
 
+def spell_out(text: str) -> str:
+    """*text* with every invisible or unprintable character written as ``<U+XXXX>``.
+
+    For anything read from a scanned file that ends up in a message.
+    """
+    return "".join(_spell_out(ch) for ch in text)
+
+
 def _excerpt(line: str, columns: list[int]) -> str:
     """The part of *line* around the findings at *columns* (1-based).
 

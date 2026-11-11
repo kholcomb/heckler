@@ -5,9 +5,10 @@
 # Exit code 1 if findings detected (CI-friendly)
 #
 # PATTERN below is the same character list the Python scanner reports at its
-# default severity; tests/test_coverage.py fails if the two drift apart. What
-# this script cannot do: severities, allowlists, suppression comments, or
-# telling an emoji's variation selector from a hidden one.
+# default severity, and INCLUDES the same file names it scans by default;
+# tests/test_coverage.py fails if either drifts apart. What this script
+# cannot do: severities, allowlists, suppression comments, or telling an
+# emoji's variation selector from a hidden one.
 
 set -euo pipefail
 
@@ -39,16 +40,59 @@ if ! matches_sample; then
   fi
 fi
 
+# The file names the Python scanner looks at by default: its extension list,
+# the well-known names without one (Makefile, Dockerfile, .env) and their
+# dotted variants (Dockerfile.dev, .env.example). The list is generated; to
+# change it, edit the lists in src/heckler/scanner.py and run
+# scripts/sync_shell_includes.py. grep compares names case-sensitively, so
+# unlike the Python scanner this does not pick up "MAIN.JS" or "script.R".
+# BEGIN GENERATED INCLUDES: written by scripts/sync_shell_includes.py, do not edit
 INCLUDES=(
-  --include='*.js' --include='*.cjs' --include='*.mjs'
-  --include='*.ts' --include='*.jsx' --include='*.tsx'
-  --include='*.py' --include='*.rb' --include='*.go' --include='*.rs'
-  --include='*.c' --include='*.cpp' --include='*.h' --include='*.java'
-  --include='*.cs' --include='*.php' --include='*.sh' --include='*.yaml'
-  --include='*.yml' --include='*.json' --include='*.toml' --include='*.xml'
-  --include='*.html' --include='*.css' --include='*.sql' --include='*.swift'
-  --include='*.kt' --include='*.scala' --include='*.lua' --include='*.md'
+  --include='*.ada' --include='*.adb' --include='*.ads' --include='*.asm'
+  --include='*.bash' --include='*.bat' --include='*.c' --include='*.cc'
+  --include='*.cfg' --include='*.cjs' --include='*.cl' --include='*.clj'
+  --include='*.cljc' --include='*.cljs' --include='*.cmake' --include='*.cmd'
+  --include='*.conf' --include='*.cpp' --include='*.cr' --include='*.cs'
+  --include='*.css' --include='*.cts' --include='*.d' --include='*.dart'
+  --include='*.dockerfile' --include='*.edn' --include='*.ejs'
+  --include='*.el' --include='*.elm' --include='*.erb' --include='*.erl'
+  --include='*.ex' --include='*.exs' --include='*.f03' --include='*.f90'
+  --include='*.f95' --include='*.fish' --include='*.go' --include='*.gql'
+  --include='*.gradle' --include='*.graphql' --include='*.groovy'
+  --include='*.h' --include='*.hbs' --include='*.hcl' --include='*.hh'
+  --include='*.hpp' --include='*.hrl' --include='*.hs' --include='*.htm'
+  --include='*.html' --include='*.ini' --include='*.ipynb' --include='*.java'
+  --include='*.jinja' --include='*.jl' --include='*.js' --include='*.json'
+  --include='*.jsx' --include='*.kt' --include='*.lhs' --include='*.lisp'
+  --include='*.lua' --include='*.m' --include='*.md' --include='*.mdc'
+  --include='*.mjs' --include='*.mk' --include='*.ml' --include='*.mli'
+  --include='*.mm' --include='*.mts' --include='*.nim' --include='*.njk'
+  --include='*.pas' --include='*.php' --include='*.pl' --include='*.pp'
+  --include='*.properties' --include='*.proto' --include='*.ps1'
+  --include='*.pth' --include='*.pug' --include='*.purs' --include='*.py'
+  --include='*.pyi' --include='*.r' --include='*.rake' --include='*.rb'
+  --include='*.rkt' --include='*.rs' --include='*.s' --include='*.scala'
+  --include='*.scss' --include='*.sh' --include='*.sql' --include='*.svelte'
+  --include='*.swift' --include='*.tcl' --include='*.tf' --include='*.toml'
+  --include='*.ts' --include='*.tsx' --include='*.txt' --include='*.v'
+  --include='*.vb' --include='*.vbs' --include='*.vue' --include='*.xml'
+  --include='*.yaml' --include='*.yml' --include='*.zig' --include='*.zsh'
+  --include='.babelrc' --include='.clinerules' --include='.cursorrules'
+  --include='.dockerignore' --include='.env' --include='.eslintrc'
+  --include='.gitattributes' --include='.gitignore' --include='.gitmodules'
+  --include='.npmignore' --include='.prettierrc' --include='.windsurfrules'
+  --include='Appfile' --include='BUILD' --include='Berksfile'
+  --include='Brewfile' --include='Cakefile' --include='Dangerfile'
+  --include='Dockerfile' --include='Fastfile' --include='GNUmakefile'
+  --include='Gemfile' --include='Guardfile' --include='Jakefile'
+  --include='Jenkinsfile' --include='Justfile' --include='Makefile'
+  --include='Matchfile' --include='Podfile' --include='Procfile'
+  --include='Rakefile' --include='SConscript' --include='SConstruct'
+  --include='Steepfile' --include='Taskfile' --include='Vagrantfile'
+  --include='WORKSPACE' --include='justfile' --include='makefile'
+  --include='.env.*' --include='Dockerfile.*'
 )
+# END GENERATED INCLUDES
 
 EXCLUDES=(
   --exclude-dir=node_modules --exclude-dir=vendor --exclude-dir=.git

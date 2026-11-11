@@ -5,11 +5,13 @@ Characters are built with chr() so this file contains none of them.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,7 +23,13 @@ from heckler.characters import (
     get_char_info,
 )
 from heckler.formatters import format_sarif
-from heckler.scanner import _MAX_FINDINGS_PER_FILE, Scanner
+from heckler.scanner import (
+    _MAX_FINDINGS_PER_FILE,
+    DEFAULT_TEXT_EXTENSIONS,
+    KNOWN_FILENAME_PREFIXES,
+    KNOWN_FILENAMES,
+    Scanner,
+)
 
 REPO_ROOT = Path(__file__).parent.parent
 
@@ -208,6 +216,51 @@ class TestShellFallback:
         assert [f"U+{cp:04X}" for cp in missing] == [], "in the Python scanner but not the script"
         assert [f"U+{cp:04X}" for cp in extra] == [], "in the script but not the Python scanner"
 
+    def test_file_list_matches_what_the_scanner_scans_by_default(self) -> None:
+        script = (REPO_ROOT / "scripts" / "heckler-scan.sh").read_text(encoding="utf-8")
+        block = script[script.index("INCLUDES=(") : script.index("# END GENERATED INCLUDES")]
+        in_script = set(re.findall(r"--include='([^']*)'", block))
+
+        scanned = (
+            {f"*{extension}" for extension in DEFAULT_TEXT_EXTENSIONS}
+            | set(KNOWN_FILENAMES)
+            | {f"{prefix}*" for prefix in KNOWN_FILENAME_PREFIXES}
+        )
+        hint = "; run: python scripts/sync_shell_includes.py"
+        assert sorted(scanned - in_script) == [], "scanned by Python but not by the script" + hint
+        assert sorted(in_script - scanned) == [], "scanned by the script but not by Python" + hint
+        # Nothing else selects files: every --include in the script is in the block.
+        assert script.count("--include=") == len(in_script)
+
+    def test_file_list_is_what_the_generator_writes(self) -> None:
+        """The block is generated; an edit by hand, even a harmless one, is a drift."""
+        path = REPO_ROOT / "scripts" / "sync_shell_includes.py"
+        spec = importlib.util.spec_from_file_location("sync_shell_includes", path)
+        assert spec and spec.loader
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+
+        script = (REPO_ROOT / "scripts" / "heckler-scan.sh").read_text(encoding="utf-8")
+        assert generator.replace_block(script) == script
+        assert generator.main(["--check"]) == 0
+
+    def test_generator_check_fails_on_a_stale_list(self, tmp_path: Path) -> None:
+        stale = tmp_path / "heckler-scan.sh"
+        script = (REPO_ROOT / "scripts" / "heckler-scan.sh").read_text(encoding="utf-8")
+        stale.write_text(script.replace(" --include='*.py'", ""), encoding="utf-8")
+        generator = tmp_path / "sync_shell_includes.py"
+        shutil.copy(REPO_ROOT / "scripts" / "sync_shell_includes.py", generator)
+
+        check = subprocess.run(
+            [sys.executable, str(generator), "--check"], capture_output=True, text=True, timeout=60
+        )
+        assert check.returncode == 1
+        assert "does not match" in check.stderr
+        assert "--include='*.py'" not in stale.read_text(encoding="utf-8")
+
+        subprocess.run([sys.executable, str(generator)], check=True, timeout=60)
+        assert stale.read_text(encoding="utf-8") == script
+
 
 def _grep_supports_pcre() -> bool:
     if os.name == "nt" or shutil.which("bash") is None or shutil.which("grep") is None:
@@ -251,6 +304,42 @@ class TestShellFallbackRuns:
         result = self._run(tmp_path)
         assert result.returncode == 1
         assert "sample.js" in result.stdout
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Makefile",
+            "Dockerfile",
+            "Dockerfile.dev",
+            "Jenkinsfile",
+            ".env",
+            ".env.example",
+            ".gitattributes",
+            ".cursorrules",
+            "rule.mdc",
+            "worker.mts",
+            "main.cc",
+            "page.htm",
+            "view.html.erb",
+            "notebook.ipynb",
+            "hooks.pth",
+            "sub/dir/deep.zig",
+        ],
+    )
+    def test_same_files_as_the_python_scanner(self, tmp_path: Path, name: str) -> None:
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("v = 'a" + chr(0x200B) + "b'\n", encoding="utf-8")
+        assert len(Scanner().scan_path(tmp_path)) == 1
+        result = self._run(tmp_path)
+        assert result.returncode == 1, result.stdout
+        assert Path(name).name in result.stdout
+
+    @pytest.mark.parametrize("name", ["notes", "data.bin", "Dockerfiles", "env", "x.example"])
+    def test_same_files_left_out_as_the_python_scanner(self, tmp_path: Path, name: str) -> None:
+        (tmp_path / name).write_text("v = 'a" + chr(0x200B) + "b'\n", encoding="utf-8")
+        assert Scanner().scan_path(tmp_path) == []
+        assert self._run(tmp_path).returncode == 0
 
     def test_nul_byte_does_not_hide_the_file(self, tmp_path: Path) -> None:
         (tmp_path / "hidden.js").write_bytes(

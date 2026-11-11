@@ -405,3 +405,67 @@ class TestDiffOnlyExitCodes:
 
     def test_unchanged_lockfile_passes(self, repo: Path) -> None:
         assert main(["--ci", *self.ARGS]) == 0
+
+
+class TestAllText:
+    """--all-text reaches the files of a changed Python package that have no source extension."""
+
+    FILES = {
+        "sample_impl/__init__.py": CLEAN,
+        "sample_impl/templates/page.tmpl": PLANTED,
+        "sample_impl/LICENSE": CLEAN,
+        "sample_impl/_native.so": "ELF" + chr(0) * 8 + PLANTED,
+    }
+
+    def test_only_source_extensions_by_default(self, tmp_path: Path) -> None:
+        sp = make_venv(tmp_path)
+        install(sp, "heckler_sample", "1.0", self.FILES)
+        lock = str(tmp_path / "requirements.txt")
+        targets, problem = resolve_package("heckler-sample", "1.0", "pip", lock)
+        assert (targets, problem) == ([sp / "sample_impl" / "__init__.py"], "")
+
+    def test_every_text_file_with_all_text(self, tmp_path: Path) -> None:
+        sp = make_venv(tmp_path)
+        install(sp, "heckler_sample", "1.0", self.FILES)
+        lock = str(tmp_path / "requirements.txt")
+        targets, problem = resolve_package("heckler-sample", "1.0", "pip", lock, all_text=True)
+        assert problem == ""
+        names = sorted(target.relative_to(sp).as_posix() for target in targets)
+        assert names == [
+            "heckler_sample-1.0.dist-info/METADATA",
+            "heckler_sample-1.0.dist-info/RECORD",
+            "sample_impl/LICENSE",
+            "sample_impl/__init__.py",
+            "sample_impl/templates/page.tmpl",
+        ]
+
+    def test_pth_file_is_scanned_by_default(self, tmp_path: Path) -> None:
+        sp = make_venv(tmp_path)
+        install(sp, "heckler_sample", "1.0", {"heckler_sample_init.pth": PLANTED})
+        lock = str(tmp_path / "requirements.txt")
+        targets, _ = resolve_package("heckler-sample", "1.0", "pip", lock)
+        assert targets == [sp / "heckler_sample_init.pth"]
+
+    @needs_git
+    def test_diff_only_all_text_from_the_command_line(self, repo: Path) -> None:
+        sp = make_venv(repo)
+        install(sp, "heckler_sample", "1.1", self.FILES)
+        (repo / "requirements.txt").write_text("heckler-sample==1.1\n", encoding="utf-8")
+        _git(repo, "add", "requirements.txt")
+        args = ["--ci", "--scan-deps", "--diff-only", "requirements.txt"]
+
+        assert main(args) == 0
+        assert main(["--all-text", *args]) == 1
+
+    @needs_git
+    def test_bare_requirement_is_scanned_at_whatever_version_is_installed(self, repo: Path) -> None:
+        """A line without a pin used to be passed over, and its package with it."""
+        sp = make_venv(repo)
+        install(sp, "heckler_sample", "7.0", {"sample_impl/__init__.py": PLANTED})
+        (repo / "requirements.txt").write_text("heckler-sample\n", encoding="utf-8")
+        _git(repo, "add", "requirements.txt")
+
+        unscanned: list[str] = []
+        findings = scan_changed_deps(["requirements.txt"], Scanner(scan_deps=True), unscanned)
+        assert unscanned == []
+        assert len(findings) == 3

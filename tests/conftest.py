@@ -67,7 +67,7 @@ def tmp_scan_dir(tmp_path: Path) -> Path:
     # File with heckler-ignore comment
     ignored = tmp_path / "ignored.js"
     ignored.write_text(
-        'const safe = "\ufe01"; // heckler-ignore\nconst unsafe = "\ufe02";\n',
+        'const safe = "\ufe01"; // heckler-ignore U+FE01\nconst unsafe = "\ufe02";\n',
         encoding="utf-8",
     )
 

@@ -2,9 +2,10 @@
 
 Parses staged lockfile diffs to identify changed packages, then scans
 only the installed copies of those packages — fast enough for pre-commit
-(<2s). A changed package that is not installed, or is installed at a
-different version than the lockfile names, is reported as unscanned
-rather than passed over.
+(<2s). Whatever could not be checked is reported as unscanned rather than
+passed over: a changed package that is not installed, or is installed at a
+different version than the lockfile names, a lockfile in a format heckler
+does not read, and a line of a requirements file it cannot make sense of.
 """
 
 from __future__ import annotations
@@ -21,12 +22,13 @@ import sysconfig
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
-from .scanner import DEP_SCAN_EXTENSIONS
+from .formatters.text import spell_out
+from .scanner import DEP_SCAN_EXTENSIONS, Scanner
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
-    from .scanner import Finding, Scanner
+    from .scanner import Finding
 
 # Ask git for the whole file as context. The parsers walk the new side of the
 # diff and attribute each added line to the package block it sits in. With the
@@ -50,7 +52,13 @@ def detect_ecosystem(lockfile_path: str) -> str:
         "gemfile.lock": "ruby",
         "composer.lock": "composer",
     }
+    if name.startswith("requirements") and name.endswith(".txt"):
+        return "pip"  # requirements-dev.txt, requirements_test.txt, ...
     return mapping.get(name, "unknown")
+
+
+# Lockfiles that are recognised by name but have no parser yet.
+_UNPARSED_ECOSYSTEMS = ("cargo", "go", "ruby", "composer")
 
 
 def _git_diff(*args: str) -> str:
@@ -84,12 +92,19 @@ def get_lockfile_diff(lockfile_path: str) -> str:
         return ""
 
 
-def parse_changed_packages(diff_text: str, ecosystem: str) -> list[tuple[str, str]]:
-    """Parse a lockfile diff to extract (name, version) tuples for added/changed packages."""
+def parse_changed_packages(
+    diff_text: str, ecosystem: str, problems: list[str] | None = None
+) -> list[tuple[str, str]]:
+    """Parse a lockfile diff to extract (name, version) tuples for added/changed packages.
+
+    Parts of the diff that could not be read are described in *problems*,
+    when it is given: a package behind one of those was not found, so the
+    caller has nothing to scan for it.
+    """
     if ecosystem == "npm":
-        return _parse_npm_lockfile_diff(diff_text)
+        return _parse_npm_lockfile_diff(diff_text, problems)
     elif ecosystem == "pip":
-        return _parse_pip_diff(diff_text)
+        return _parse_pip_diff(diff_text, problems)
     elif ecosystem == "poetry":
         return _parse_poetry_diff(diff_text)
     elif ecosystem == "yarn":
@@ -98,7 +113,7 @@ def parse_changed_packages(diff_text: str, ecosystem: str) -> list[tuple[str, st
         return _parse_pnpm_diff(diff_text)
     elif ecosystem == "pipenv":
         return _parse_pipfile_lock_diff(diff_text)
-    elif ecosystem in ("cargo", "go", "ruby", "composer"):
+    elif ecosystem in _UNPARSED_ECOSYSTEMS:
         print(
             f"Warning: {ecosystem} lockfile parsing is not yet supported. "
             f"Changed packages will not be scanned with --diff-only.",
@@ -164,13 +179,42 @@ def _indent(text: str) -> int:
 
 
 _NPM_PACKAGE_KEY_RE = re.compile(r'^(\s*)"node_modules/([^"]+)": \{\s*$')
+_NPM_LOCKFILE_VERSION_RE = re.compile(r'^\s*"lockfileVersion": (\d+),?\s*$')
 _JSON_OBJECT_KEY_RE = re.compile(r'^(\s*)"([^"]+)": \{\s*$')
 _JSON_VERSION_RE = re.compile(r'^\s*"version": "([^"]+)",?\s*$')
 _JSON_LINK_RE = re.compile(r'^\s*"link": true,?\s*$')
+_JSON_CLOSING_LINES = ("}", "},")
 
 
-def _parse_npm_lockfile_diff(diff_text: str) -> list[tuple[str, str]]:
+def _parse_npm_lockfile_diff(
+    diff_text: str, problems: list[str] | None = None
+) -> list[tuple[str, str]]:
     """Parse a package-lock.json diff for added or changed packages.
+
+    Versions 2 and 3 list every package under ``"packages"``; version 1 has
+    only the ``"dependencies"`` tree. A version heckler does not know is
+    reported in *problems* rather than guessed at.
+    """
+    lines = [(added, text) for added, text in _new_side(diff_text) if text.strip()]
+    version = next(
+        (int(m.group(1)) for _, text in lines if (m := _NPM_LOCKFILE_VERSION_RE.match(text))),
+        None,
+    )
+    if version == 1:
+        return _parse_npm_dependency_tree(lines)
+    if version is not None and version not in (2, 3):
+        if problems is not None and any(added for added, _ in lines):
+            problems.append(
+                f"lockfileVersion {version} is not one heckler can read,"
+                " so the packages it changes were not scanned"
+            )
+        return []
+    # Version 2 or 3, or a diff without enough context to show the version.
+    return _parse_npm_packages(lines)
+
+
+def _parse_npm_packages(lines: list[tuple[bool, str]]) -> list[tuple[str, str]]:
+    """Changed packages in the ``"packages"`` section of lockfile v2 and v3.
 
     A package counts as changed when any line inside its
     ``"node_modules/<name>": {`` block was added, which covers both new
@@ -181,9 +225,7 @@ def _parse_npm_lockfile_diff(diff_text: str) -> list[tuple[str, str]]:
     current: str | None = None
     current_indent = 0
     field_indent = -1
-    for added, text in _new_side(diff_text):
-        if not text.strip():
-            continue
+    for added, text in lines:
         indent = _indent(text)
         m = _NPM_PACKAGE_KEY_RE.match(text)
         if m:
@@ -207,26 +249,129 @@ def _parse_npm_lockfile_diff(diff_text: str) -> list[tuple[str, str]]:
     return changes.result()
 
 
-_REQUIREMENT_RE = re.compile(
-    r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*(==|>=|<=|!=|~=)\s*([^\s;\\#,]*)"
+def _parse_npm_dependency_tree(lines: list[tuple[bool, str]]) -> list[tuple[str, str]]:
+    """Changed packages in the ``"dependencies"`` tree of lockfile v1.
+
+    The tree mirrors ``node_modules``: a package that could not be hoisted
+    sits in the ``"dependencies"`` of the package that needs it and is
+    installed in that package's own ``node_modules``. Names are returned as
+    install paths (``express/node_modules/debug``), as they are for v2 and
+    v3. A package counts as changed when a line of its own block was added;
+    a change inside a nested package belongs to that package alone.
+    """
+    changes = _Changes()
+    # The objects the current line is inside, innermost last, as
+    # (indent, kind, install path). A "tree" holds packages, a "package"
+    # holds its fields, and "other" is anything else, such as "requires".
+    stack: list[tuple[int, str, str]] = []
+    for added, text in lines:
+        indent = _indent(text)
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+        kind, path = (stack[-1][1], stack[-1][2]) if stack else ("root", "")
+
+        m = _JSON_OBJECT_KEY_RE.match(text)
+        if m:
+            key = m.group(2)
+            if kind == "tree":
+                path = f"{path}/node_modules/{key}" if path else key
+                stack.append((indent, "package", path))
+                changes.set_name(path, path)
+            elif kind in ("root", "package") and key == "dependencies":
+                stack.append((indent, "tree", path))
+            else:
+                stack.append((indent, "other", path))
+        elif kind == "package":
+            version = _JSON_VERSION_RE.match(text)
+            if version:
+                # "github:user/repo#ref", "file:../lib", a tarball URL: there
+                # is no release number to compare the install against.
+                release = version.group(1)
+                changes.set_version(path, "" if ":" in release or "/" in release else release)
+
+        if added and text.strip() not in _JSON_CLOSING_LINES:
+            owner = next((p for _, k, p in reversed(stack) if k == "package"), None)
+            if owner is not None:
+                changes.mark(owner)
+    return changes.result()
+
+
+# A requirement, as pip reads it: a name, optional extras, then either
+# version clauses or "@ url", then an optional marker, comment, line
+# continuation or per-requirement option such as --hash.
+_REQUIREMENT_NAME_RE = re.compile(
+    r"([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)\s*(?:\[[^\]]*\])?\s*"
 )
+_REQUIREMENT_CLAUSE_RE = re.compile(r"(===|==|~=|!=|<=|>=|<|>)\s*([^\s,;#\\()]+)\s*")
+_REQUIREMENT_END_RE = re.compile(r";|#|\\|--|$")
+_STARTS_WITH_NAME_RE = re.compile(r"[A-Za-z0-9]")
+_MAX_SHOWN_LINE = 120
 
 
-def _parse_pip_diff(diff_text: str) -> list[tuple[str, str]]:
+def _parse_requirement(line: str) -> tuple[str, str] | None:
+    """Read one requirements line as ``(name, version)``, or None if it is not one.
+
+    Only a single ``==`` clause without a wildcard yields a version. For a
+    bare name, a range or ``name @ url`` there is nothing to check the
+    installed version against, so the version is empty and whatever is
+    installed gets scanned.
+    """
+    m = _REQUIREMENT_NAME_RE.match(line)
+    if not m:
+        return None
+    name, rest = m.group(1).lower(), line[m.end() :]
+    if rest.startswith("@"):
+        return name, ""
+
+    parenthesised = rest.startswith("(")
+    if parenthesised:
+        rest = rest[1:].lstrip()
+    clauses: list[tuple[str, str]] = []
+    while True:
+        clause = _REQUIREMENT_CLAUSE_RE.match(rest)
+        if not clause:
+            break
+        clauses.append((clause.group(1), clause.group(2)))
+        rest = rest[clause.end() :]
+        if not rest.startswith(","):
+            break
+        rest = rest[1:].lstrip()
+    if parenthesised:
+        if not rest.startswith(")"):
+            return None
+        rest = rest[1:].lstrip()
+    if not _REQUIREMENT_END_RE.match(rest):
+        return None
+
+    version = ""
+    if len(clauses) == 1 and clauses[0][0] in ("==", "===") and "*" not in clauses[0][1]:
+        version = clauses[0][1]
+    return name, version
+
+
+def _parse_pip_diff(diff_text: str, problems: list[str] | None = None) -> list[tuple[str, str]]:
     """Parse a requirements.txt diff for added packages.
 
-    Only an exact ``==`` pin yields a version; for a range the installed
-    version cannot be checked against the file.
+    Comments, blank lines and options such as ``-r`` and ``--hash`` are
+    passed over. Any other added line that starts like a package name but
+    cannot be read as a requirement, a bare URL for instance, is described
+    in *problems*: it may install something that is then never scanned.
     """
     packages: list[tuple[str, str]] = []
     for line in diff_text.splitlines():
         if not line.startswith("+") or line.startswith("+++"):
             continue
-        m = _REQUIREMENT_RE.match(line[1:].strip())
-        if not m:
-            continue  # comments, options such as -r and --hash, blank lines
-        name, operator, version = m.groups()
-        packages.append((name.lower(), version if operator == "==" else ""))
+        text = line[1:].strip()
+        if not _STARTS_WITH_NAME_RE.match(text):
+            continue
+        requirement = _parse_requirement(text)
+        if requirement is not None:
+            packages.append(requirement)
+        elif problems is not None:
+            shown = spell_out(text[:_MAX_SHOWN_LINE])
+            if len(text) > _MAX_SHOWN_LINE:
+                shown += "..."
+            problems.append(f'the added line "{shown}" could not be read as a requirement')
     return list(dict.fromkeys(packages))
 
 
@@ -609,12 +754,15 @@ def _find_distributions(site_packages: Path, name: str) -> list[tuple[Path, str]
     return found
 
 
-def _distribution_files(site_packages: Path, metadata: Path) -> list[Path]:
+def _distribution_files(site_packages: Path, metadata: Path, all_text: bool = False) -> list[Path]:
     """What a distribution installed that is worth scanning.
 
     ``RECORD`` lists every installed file, which keeps the scan to this one
     distribution even when it shares a namespace directory with others.
     Without it, ``top_level.txt`` names the modules and packages.
+
+    With *all_text* (``--all-text``) every listed file that is not binary is
+    returned, not only those with a source extension.
     """
     record = metadata / "RECORD"
     if record.is_file():
@@ -629,7 +777,13 @@ def _distribution_files(site_packages: Path, metadata: Path) -> list[Path]:
             if relative.is_absolute() or ".." in relative.parts:
                 continue  # scripts and data installed outside site-packages
             path = site_packages.joinpath(*relative.parts)
-            if path.suffix.lower() in DEP_SCAN_EXTENSIONS and path.is_file():
+            if not path.is_file():
+                continue
+            if all_text:
+                wanted = Scanner.is_text_file(path)
+            else:
+                wanted = path.suffix.lower() in DEP_SCAN_EXTENSIONS
+            if wanted:
                 files.append(path)
         return files
 
@@ -648,14 +802,16 @@ def _distribution_files(site_packages: Path, metadata: Path) -> list[Path]:
     return targets
 
 
-def _resolve_python(pkg_name: str, version: str, lockfile_dir: Path) -> tuple[list[Path], str]:
+def _resolve_python(
+    pkg_name: str, version: str, lockfile_dir: Path, all_text: bool = False
+) -> tuple[list[Path], str]:
     other_versions: list[str] = []
     for site_packages in _python_site_packages(lockfile_dir):
         for metadata, installed in _find_distributions(site_packages, pkg_name):
             if version and installed and not _same_python_version(installed, version):
                 other_versions.append(installed)
                 continue
-            return _distribution_files(site_packages, metadata), ""
+            return _distribution_files(site_packages, metadata, all_text), ""
     if other_versions:
         return [], f"the installed version is {other_versions[0]}"
 
@@ -669,7 +825,7 @@ def _resolve_python(pkg_name: str, version: str, lockfile_dir: Path) -> tuple[li
 
 
 def resolve_package(
-    pkg_name: str, version: str, ecosystem: str, lockfile_path: str
+    pkg_name: str, version: str, ecosystem: str, lockfile_path: str, all_text: bool = False
 ) -> tuple[list[Path], str]:
     """Find what to scan for a package that changed in a lockfile.
 
@@ -678,12 +834,16 @@ def resolve_package(
     *problem* is empty on success; otherwise it says why the package cannot
     be scanned, which is the case when it is not installed or when the
     installed copy is a different version than the lockfile names.
+
+    *all_text* is ``--all-text``: return every text file a Python
+    distribution installed, rather than the ones with a source extension.
+    Directories are filtered by the scanner either way.
     """
     lockfile_dir = Path(lockfile_path).parent
     if ecosystem in _NODE_ECOSYSTEMS:
         return _resolve_node(pkg_name, version, ecosystem, lockfile_dir)
     if ecosystem in _PYTHON_ECOSYSTEMS:
-        return _resolve_python(pkg_name, version, lockfile_dir)
+        return _resolve_python(pkg_name, version, lockfile_dir, all_text)
     return [], f"{ecosystem} packages cannot be located"
 
 
@@ -704,15 +864,26 @@ def scan_changed_deps(
 ) -> list[Finding]:
     """Main entry point: parse lockfile diffs and scan only changed packages.
 
-    A changed package that cannot be scanned is reported on stderr and, when
-    *unscanned* is given, described there so the caller can fail the run.
+    Anything that could not be checked is reported on stderr and, when
+    *unscanned* is given, described there so the caller can fail the run: a
+    lockfile heckler has no parser for, a part of one it could not read, and
+    a changed package that is missing or installed at another version.
     """
     all_findings: list[Finding] = []
+    all_text = scanner.text_extensions is None
+
+    def not_scanned(message: str) -> None:
+        print(f"Warning: {message}", file=sys.stderr)
+        if unscanned is not None:
+            unscanned.append(message)
 
     for lf_path in lockfile_paths:
         ecosystem = detect_ecosystem(lf_path)
         if ecosystem == "unknown":
-            print(f"Warning: Unknown lockfile format: {lf_path}", file=sys.stderr)
+            not_scanned(f"{lf_path} was not scanned: it is not a lockfile heckler can read")
+            continue
+        if ecosystem in _UNPARSED_ECOSYSTEMS:
+            not_scanned(f"{lf_path} was not scanned: {ecosystem} lockfiles are not supported yet")
             continue
 
         diff_text = get_lockfile_diff(lf_path)
@@ -720,14 +891,16 @@ def scan_changed_deps(
             print(f"Warning: No diff available for {lf_path}. Skipping.", file=sys.stderr)
             continue
 
-        for pkg_name, version in parse_changed_packages(diff_text, ecosystem):
-            targets, problem = resolve_package(pkg_name, version, ecosystem, lf_path)
+        problems: list[str] = []
+        packages = parse_changed_packages(diff_text, ecosystem, problems)
+        for problem in problems:
+            not_scanned(f"{lf_path}: {problem}")
+
+        for pkg_name, version in packages:
+            targets, problem = resolve_package(pkg_name, version, ecosystem, lf_path, all_text)
             if problem:
                 label = f"{pkg_name} {version}".strip()
-                message = f"{label} changed in {lf_path} but was not scanned: {problem}"
-                print(f"Warning: {message}", file=sys.stderr)
-                if unscanned is not None:
-                    unscanned.append(message)
+                not_scanned(f"{label} changed in {lf_path} but was not scanned: {problem}")
                 continue
             for target in targets:
                 findings = scanner.scan_path(target)

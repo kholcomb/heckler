@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from heckler._version import __version__
 from heckler.cli import main
 
 
@@ -58,6 +59,7 @@ class TestCLI:
 
         with pytest.raises(SystemExit, match="0"):  # type: ignore[attr-defined]
             main(["--version"])
+        assert capsys.readouterr().out == f"heckler {__version__}\n"  # type: ignore[attr-defined]
 
     def test_quiet_mode(self, tmp_scan_dir: Path, capsys: object) -> None:
         main(["--quiet", str(tmp_scan_dir)])
