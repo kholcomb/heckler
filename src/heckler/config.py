@@ -23,6 +23,7 @@ class Config:
     exclude_patterns: list[str] = field(default_factory=list)
     allow_bom: bool = True
     scan_deps: bool = False
+    allow_emoji: bool = True
 
     @staticmethod
     def defaults() -> Config:
@@ -67,6 +68,9 @@ def load_config(
 
     if 'allow_bom' in raw:
         config.allow_bom = bool(raw['allow_bom'])
+
+    if 'allow_emoji' in raw:
+        config.allow_emoji = bool(raw['allow_emoji'])
 
     if 'extra_skip_dirs' in raw and isinstance(raw['extra_skip_dirs'], list):
         config.skip_dirs = config.skip_dirs | frozenset(str(d) for d in raw['extra_skip_dirs'])

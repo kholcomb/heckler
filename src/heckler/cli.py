@@ -131,6 +131,7 @@ def main(argv: list[str] | None = None) -> int:
         severity_threshold=config.severity_threshold,
         exclude_patterns=config.exclude_patterns,
         allow_bom=config.allow_bom,
+        allow_emoji=config.allow_emoji,
         scan_deps=config.scan_deps,
     )
 
@@ -173,6 +174,7 @@ def _run_diff_only(args: argparse.Namespace, config: Config) -> int:
         severity_threshold=config.severity_threshold,
         exclude_patterns=config.exclude_patterns,
         allow_bom=config.allow_bom,
+        allow_emoji=config.allow_emoji,
         scan_deps=True,
     )
 

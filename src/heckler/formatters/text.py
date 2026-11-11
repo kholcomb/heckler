@@ -71,7 +71,9 @@ def format_text(findings: list[Finding], *, color: bool = True, quiet: bool = Fa
         for f in file_findings:
             sev_label = f.severity.value.upper()
             tag = ""
-            if f.category.value == "variation_selector":
+            if f.severity == Severity.INFO:
+                pass  # part of a well-formed emoji, not an attack signature
+            elif f.category.value == "variation_selector":
                 tag = " [GLASSWORM]"
             elif f.category.value == "bidi_control":
                 tag = " [TROJAN-SOURCE]"

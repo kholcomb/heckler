@@ -14,6 +14,7 @@ from .characters import (
     Severity,
     ThreatCategory,
     get_char_info,
+    is_emoji_context,
 )
 
 
@@ -230,6 +231,7 @@ class Scanner:
     allow_bom: bool = True
     scan_deps: bool = False
     diff_only: bool = False
+    allow_emoji: bool = True
 
     def scan_text(self, text: str, filename: str = "<string>") -> list[Finding]:
         """Scan a text string for dangerous Unicode. The core primitive."""
@@ -274,6 +276,10 @@ class Scanner:
                 if suppress is None or cp in suppress:
                     continue
                 info = get_char_info(cp)
+                if self.allow_emoji and is_emoji_context(line, match.start()):
+                    # Part of a well-formed emoji. Still reported, but at
+                    # INFO, which is below every default threshold.
+                    info = CharInfo(f"{info.name} (in emoji)", info.category, Severity.INFO)
                 if info.severity >= self.severity_threshold:
                     findings.append(Finding.from_match(
                         filepath=filename,

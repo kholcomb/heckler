@@ -121,6 +121,7 @@ Create `.heckler.yml` in your project root:
 ```yaml
 severity: medium           # Minimum severity to report
 allow_bom: true            # Treat U+FEFF at file start as INFO (suppressed)
+allow_emoji: true          # Report selectors and joiners inside emoji as INFO
 
 allowlist:                 # Glob patterns for files to skip
   - "**/*.po"
@@ -134,6 +135,8 @@ extra_extensions:          # Additional file extensions to scan
 ```
 
 Also reads `[tool.heckler]` from `pyproject.toml`.
+
+Emoji contain two of the characters heckler looks for: a presentation selector (U+FE0E or U+FE0F) after the character it styles, and a zero width joiner (U+200D) between two emoji. With `allow_emoji: true`, the default, those are reported at INFO, which is below the default threshold, so an emoji in a README or a string literal does not fail the scan. Use `--severity info` to list them. A selector anywhere else, or next to another variation selector, is still CRITICAL, so a run of them hidden behind an emoji is reported in full. Set `allow_emoji: false` to flag every occurrence.
 
 Suppress the next line with a dedicated directive (preferred):
 

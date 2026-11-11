@@ -220,3 +220,82 @@ def get_char_info(cp: int) -> CharInfo:
             Severity.HIGH,
         )
     return CharInfo(f"Unknown U+{cp:04X}", ThreatCategory.INVISIBLE_FORMAT, Severity.MEDIUM)
+
+
+# Characters that can take an emoji or text presentation selector. This is a
+# superset of the bases in Unicode's emoji-variation-sequences.txt (checked
+# against 18.0), kept as block ranges so that new emoji need no update here.
+# The ASCII keycap bases are separate: they only count when U+20E3 follows.
+_EMOJI_BASE_RANGES: tuple[tuple[int, int], ...] = (
+    (0x00A9, 0x00A9),    # Copyright
+    (0x00AE, 0x00AE),    # Registered
+    (0x203C, 0x203C),    # Double exclamation mark
+    (0x2049, 0x2049),    # Exclamation question mark
+    (0x2122, 0x2122),    # Trade mark
+    (0x2139, 0x2139),    # Information source
+    (0x2194, 0x21AA),    # Arrows
+    (0x231A, 0x23FF),    # Watch, hourglass, keyboard, media controls
+    (0x24C2, 0x24C2),    # Circled M
+    (0x25AA, 0x25FE),    # Geometric shapes
+    (0x2600, 0x27BF),    # Miscellaneous symbols and dingbats
+    (0x2934, 0x2935),    # Curved arrows
+    (0x2B05, 0x2B55),    # Arrows, squares, star, circle
+    (0x3030, 0x3030),    # Wavy dash
+    (0x303D, 0x303D),    # Part alternation mark
+    (0x3297, 0x3297),    # Circled ideograph congratulation
+    (0x3299, 0x3299),    # Circled ideograph secret
+    (0x1F000, 0x1FAFF),  # Emoji blocks, including skin tone modifiers
+)
+_KEYCAP_BASES = frozenset("0123456789#*")
+_COMBINING_ENCLOSING_KEYCAP = "\u20E3"
+_PRESENTATION_SELECTORS = frozenset({0xFE0E, 0xFE0F})
+_ZERO_WIDTH_JOINER = 0x200D
+
+
+def _is_emoji_base(ch: str) -> bool:
+    cp = ord(ch)
+    return any(lo <= cp <= hi for lo, hi in _EMOJI_BASE_RANGES)
+
+
+def _is_variation_selector(ch: str) -> bool:
+    cp = ord(ch)
+    return 0xFE00 <= cp <= 0xFE0F or 0xE0100 <= cp <= 0xE01EF or 0x180B <= cp <= 0x180D
+
+
+def is_emoji_context(text: str, index: int) -> bool:
+    """True if the character at *index* is an ordinary part of an emoji.
+
+    Well-formed emoji contain two of the characters heckler flags:
+
+    - U+FE0E and U+FE0F, the text and emoji presentation selectors, directly
+      after the character they style (U+26A0 U+FE0F is the warning sign), or
+      after a keycap base that U+20E3 then encloses. A selector that is
+      followed by another variation selector never qualifies, so a run of
+      them is reported in full.
+    - U+200D, the zero width joiner, between two emoji, as in the family,
+      profession and flag sequences.
+
+    Glassworm hides its payload in long runs of selectors with nothing
+    visible between them; one selector after a visible pictograph cannot
+    carry that.
+    """
+    cp = ord(text[index])
+    prev = text[index - 1] if index > 0 else ""
+    nxt = text[index + 1] if index + 1 < len(text) else ""
+
+    if cp in _PRESENTATION_SELECTORS:
+        if nxt and _is_variation_selector(nxt):
+            return False
+        if prev in _KEYCAP_BASES:
+            return nxt == _COMBINING_ENCLOSING_KEYCAP
+        return bool(prev) and _is_emoji_base(prev)
+
+    if cp == _ZERO_WIDTH_JOINER:
+        if not nxt or not _is_emoji_base(nxt):
+            return False
+        if prev and ord(prev) == 0xFE0F:
+            # Joiner after a styled emoji: look at what the selector styles.
+            prev = text[index - 2] if index > 1 else ""
+        return bool(prev) and _is_emoji_base(prev)
+
+    return False

@@ -35,6 +35,7 @@ def scan(
         severity_threshold=config.severity_threshold,
         exclude_patterns=config.exclude_patterns,
         allow_bom=config.allow_bom,
+        allow_emoji=config.allow_emoji,
         scan_deps=config.scan_deps,
     )
     return scanner.scan_path(P(path))
