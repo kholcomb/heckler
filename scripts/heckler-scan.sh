@@ -3,6 +3,11 @@
 # Requires GNU grep with PCRE support (grep -P). macOS users: brew install grep
 # Usage: ./heckler-scan.sh [directory]    (defaults to current dir)
 # Exit code 1 if findings detected (CI-friendly)
+#
+# PATTERN below is the same character list the Python scanner reports at its
+# default severity; tests/test_coverage.py fails if the two drift apart. What
+# this script cannot do: severities, allowlists, suppression comments, or
+# telling an emoji's variation selector from a hidden one.
 
 set -euo pipefail
 
@@ -16,7 +21,7 @@ if ! echo "test" | grep -P "test" >/dev/null 2>&1; then
   exit 2
 fi
 
-PATTERN='[\x{00A0}\x{00AD}\x{061C}\x{180E}\x{200B}-\x{200F}\x{202A}-\x{202E}\x{2060}-\x{2064}\x{2066}-\x{206F}\x{2800}\x{3164}\x{FE00}-\x{FE0F}\x{FEFF}\x{FFF9}-\x{FFFB}\x{FFA0}\x{E0001}\x{E0020}-\x{E007F}\x{E0100}-\x{E01EF}]'
+PATTERN='[\x{0000}-\x{0008}\x{000B}\x{000E}-\x{001F}\x{007F}-\x{00A0}\x{00AD}\x{034F}\x{061C}\x{115F}-\x{1160}\x{1680}\x{17B4}-\x{17B5}\x{180B}-\x{180F}\x{2000}-\x{200F}\x{2028}-\x{202F}\x{205F}-\x{206F}\x{2800}\x{3000}\x{3164}\x{FE00}-\x{FE0F}\x{FEFF}\x{FFA0}\x{FFF0}-\x{FFFC}\x{13441}-\x{13442}\x{16FE4}\x{1BCA0}-\x{1BCA3}\x{1D159}\x{1D173}-\x{1D17A}\x{E0000}-\x{E0FFF}]'
 
 INCLUDES=(
   --include='*.js' --include='*.cjs' --include='*.mjs'

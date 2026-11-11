@@ -6,6 +6,7 @@ Characters are built with chr() so this file contains none of them.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,8 @@ from heckler.characters import (
 )
 from heckler.formatters import format_sarif
 from heckler.scanner import _MAX_FINDINGS_PER_FILE, Scanner
+
+REPO_ROOT = Path(__file__).parent.parent
 
 # Default_Ignorable_Code_Point, from Unicode's DerivedCoreProperties.txt:
 # 4,174 code points that renderers are told to draw nothing for.
@@ -181,3 +184,23 @@ class TestFloodGuards:
         for name in ("a.js", "b.js"):
             (tmp_path / name).write_text(chr(0x200B) * 3, encoding="utf-8")
         assert len(Scanner().scan_path(tmp_path)) == 6
+
+
+class TestShellFallback:
+    """scripts/heckler-scan.sh carries its own copy of the list; keep them equal."""
+
+    def test_pattern_matches_what_the_scanner_reports_by_default(self) -> None:
+        script = (REPO_ROOT / "scripts" / "heckler-scan.sh").read_text(encoding="utf-8")
+        match = re.search(r"^PATTERN='\[(.*)\]'$", script, re.MULTILINE)
+        assert match, "PATTERN line not found"
+        tokens = re.findall(r"\\x\{([0-9A-Fa-f]+)\}(?:-\\x\{([0-9A-Fa-f]+)\})?", match.group(1))
+        in_script = {cp for lo, hi in tokens for cp in range(int(lo, 16), int(hi or lo, 16) + 1)}
+
+        # The script has no severities, so it carries what the scanner reports
+        # at its default threshold: everything except the INFO-level Form Feed.
+        reported = {cp for cp in all_flagged() if get_char_info(cp).severity >= Severity.LOW}
+
+        missing = sorted(reported - in_script)
+        extra = sorted(in_script - reported)
+        assert [f"U+{cp:04X}" for cp in missing] == [], "in the Python scanner but not the script"
+        assert [f"U+{cp:04X}" for cp in extra] == [], "in the script but not the Python scanner"

@@ -267,6 +267,8 @@ bash scripts/heckler-scan.sh [directory]
 
 Requires GNU grep with PCRE support (`grep -P`). macOS users: `brew install grep`.
 
+The script looks for the same characters the Python scanner reports by default; a test keeps the two lists equal. It has no severities, allowlist or suppression comments, and it cannot tell the variation selector in an emoji from a hidden one, so it flags both.
+
 ## Testing
 
 ```bash

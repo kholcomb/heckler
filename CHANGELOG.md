@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A file with a source extension that contains NUL or other control bytes is reported instead of being treated as binary
 - A NUL byte is reported once per file, and scanning a file stops after 10,000 findings
+- `scripts/heckler-scan.sh` looks for the same characters as the Python scanner; it previously missed 27 of them
 - `--diff-only --ci` exits with code 2 when a changed package is not installed, or is installed at a different version than the lockfile names, instead of passing with a warning
 - The `heckler-lockfile` pre-commit hook only triggers on lockfiles heckler can parse
 - Variation selectors and zero width joiners inside well-formed emoji are reported at INFO instead of CRITICAL and MEDIUM; set `allow_emoji: false` to flag every occurrence as before
