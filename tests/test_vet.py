@@ -406,6 +406,80 @@ class TestWhatTheSizeOfAMemberDoesNotCover:
         with pytest.raises(_UnsafeArchiveError, match="Header too large"):
             self._unpack(tar_path, tmp_path / "again")
 
+    def _member(self, name: str, data: bytes) -> bytes:
+        """A regular member: its header and its data, filled up to the block."""
+        info = tarfile.TarInfo(name)
+        info.size = len(data)
+        return info.tobuf(tarfile.GNU_FORMAT) + data.ljust(-(-len(data) // 512) * 512, b"\x00")
+
+    def test_headers_in_a_row_are_held_to_the_limit_together(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Each one is within the limit, and tarfile holds them all until the member."""
+        monkeypatch.setattr(vet, "_MAX_EXTENDED_HEADER_SIZE", 1024)
+        long_name = bytes(_raw_header("././@LongLink", tarfile.GNUTYPE_LONGNAME, 1024))
+        name = b"package/a.txt".ljust(1024, b"\x00")
+        tar_path = tmp_path / "run.tar"
+        tar_path.write_bytes((long_name + name) * 2 + self._member("a.txt", b"ok") + b"\x00" * 1024)
+        with pytest.raises(_UnsafeArchiveError, match=r"Header too large \(2048 bytes\)"):
+            self._unpack(tar_path, tmp_path / "out")
+        assert list((tmp_path / "out").iterdir()) == []
+
+    def test_long_run_of_headers_is_refused(self, tmp_path: Path) -> None:
+        """They declare nothing, so no size stops them, and tarfile calls itself for each."""
+        empty = bytes(_raw_header("././@LongLink", tarfile.GNUTYPE_LONGNAME, 0))
+        tar_path = tmp_path / "run.tar"
+        tar_path.write_bytes(empty * 1000 + self._member("a.txt", b"ok") + b"\x00" * 1024)
+        with pytest.raises(_UnsafeArchiveError, match=r"Too many headers in a row \(17\)"):
+            self._unpack(tar_path, tmp_path / "out")
+
+    def test_run_of_headers_ends_at_a_member(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One header in front of each of two members is one in a row, twice."""
+        names = ["package/" + letter * 120 + ".txt" for letter in "ab"]
+        tar_path = tmp_path / "long.tar"
+        with tarfile.open(tar_path, "w", format=tarfile.GNU_FORMAT) as tf:
+            for name in names:
+                tf.addfile(tarfile.TarInfo(name))
+        monkeypatch.setattr(vet, "_MAX_EXTENDED_HEADERS", 1)
+        monkeypatch.setattr(vet, "_MAX_EXTENDED_HEADER_SIZE", 150)  # one name, and not two
+        out = tmp_path / "out"
+        self._unpack(tar_path, out)
+        assert sorted(str(p.relative_to(out)) for p in out.glob("*/*")) == names
+        monkeypatch.setattr(vet, "_MAX_EXTENDED_HEADERS", 0)
+        with pytest.raises(_UnsafeArchiveError, match=r"Too many headers in a row \(1\)"):
+            self._unpack(tar_path, tmp_path / "again")
+
+    def test_header_that_declares_a_negative_size_is_refused(self, tmp_path: Path) -> None:
+        """It would come off what the run declares, and an older tarfile reads on to the end."""
+        header = bytes(_raw_header("././@LongLink", tarfile.GNUTYPE_LONGNAME, -1024))
+        tar_path = tmp_path / "negative.tar"
+        tar_path.write_bytes(header + self._member("a.txt", b"ok") + b"\x00" * 1024)
+        with pytest.raises(_UnsafeArchiveError, match=r"Invalid size \(-1024 bytes\)"):
+            self._unpack(tar_path, tmp_path / "out")
+
+    def test_map_of_a_sparse_member_is_not_read(self, tmp_path: Path) -> None:
+        """Its map says it has a thousand million entries, and it is refused without them.
+
+        The entries are not there. A tarfile that went on to read them would
+        fail on that, and not with the refusal.
+        """
+        data = b"1000000000\n0\n".ljust(512, b"\x00")
+        info = tarfile.TarInfo("GNUSparseFile.0/sparse.bin")
+        info.size = len(data)
+        info.pax_headers = {
+            "GNU.sparse.major": "1",
+            "GNU.sparse.minor": "0",
+            "GNU.sparse.name": "sparse.bin",
+            "GNU.sparse.realsize": "1",
+        }
+        tar_path = tmp_path / "sparse.tar"
+        with tarfile.open(tar_path, "w", format=tarfile.PAX_FORMAT) as tf:
+            tf.addfile(info, io.BytesIO(data))
+        with pytest.raises(_UnsafeArchiveError, match="sparse file: sparse.bin"):
+            self._unpack(tar_path, tmp_path / "out")
+
 
 class TestDownloadNpm:
     """Verify npm registry API download logic with mocked urllib."""

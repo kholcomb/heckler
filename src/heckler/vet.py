@@ -363,10 +363,16 @@ _ARCHIVE_ERRORS = (
 _MAX_EXTRACT_SIZE = 50 * 1024 * 1024
 # 500 MB total extraction limit
 _MAX_TOTAL_SIZE = 500 * 1024 * 1024
-# 1 MB for a header that carries a long name or pax records. A path is a
-# few KB at the most, and tarfile reads the whole of such a header into
-# memory, whatever size it declares.
+# 1 MB for the headers that carry a long name or pax records in front of
+# one member, taken together. A path is a few KB at the most, and tarfile
+# reads the whole of such a header into memory, whatever size it declares,
+# and keeps it until it has read the member.
 _MAX_EXTENDED_HEADER_SIZE = 1024 * 1024
+# How many of them may come in a row. The formats call for two: a long name
+# and a long link target, or pax records for the archive and for the member.
+# tarfile calls itself for each one, so a run with no end is a stack with
+# no end, whatever the headers declare.
+_MAX_EXTENDED_HEADERS = 16
 
 # The headers that are not members: what follows one is the name, the link
 # target or the pax records of the member after it.
@@ -407,14 +413,50 @@ class _CheckedTarInfo(tarfile.TarInfo):
     does not run either.
     """
 
-    def _proc_member(self, tf: tarfile.TarFile) -> tarfile.TarInfo:
+    def _proc_member(self, tf: _CheckedTarFile) -> tarfile.TarInfo:
         if self.type == tarfile.GNUTYPE_SPARSE:
             raise _sparse_file(self.name)
-        if self.type in _EXTENDED_HEADER_TYPES and self.size > _MAX_EXTENDED_HEADER_SIZE:
-            raise _UnsafeArchiveError(f"Header too large ({self.size} bytes)")
+        if self.type in _EXTENDED_HEADER_TYPES:
+            # tarfile reads the header after this one before it lets go of
+            # this one, so the limits are on the run and not on each header.
+            if self.size < 0:
+                # It would come off the total, and an older tarfile reads to
+                # the end of the archive for it.
+                raise _UnsafeArchiveError(f"Invalid size ({self.size} bytes) in a header")
+            tf.extended_headers += 1
+            tf.extended_header_size += self.size
+            if tf.extended_header_size > _MAX_EXTENDED_HEADER_SIZE:
+                raise _UnsafeArchiveError(f"Header too large ({tf.extended_header_size} bytes)")
+            if tf.extended_headers > _MAX_EXTENDED_HEADERS:
+                raise _UnsafeArchiveError(f"Too many headers in a row ({tf.extended_headers})")
+        else:
+            tf.extended_headers = 0
+            tf.extended_header_size = 0
         # The stubs for tarfile leave the method out, as they do all that is private.
         member: tarfile.TarInfo = super()._proc_member(tf)  # type: ignore[misc]
         return member
+
+    def _proc_gnusparse_10(
+        self, member: tarfile.TarInfo, pax_headers: dict[str, str], tf: tarfile.TarFile
+    ) -> None:
+        """Refuse a sparse member whose map is in front of its data, unread.
+
+        tarfile calls this to read that map, which is as long as it says it
+        is, and only then is there a member for _check_tar_sizes() to see.
+        The pax records that declare the member have been read by now, and
+        they are enough to refuse it.
+        """
+        raise _sparse_file(pax_headers.get("GNU.sparse.name") or member.name)
+
+
+class _CheckedTarFile(tarfile.TarFile):
+    """A tar archive that checks its headers as it reads them (see _CheckedTarInfo)."""
+
+    tarinfo = _CheckedTarInfo
+    #: The headers since the last member that are not members themselves:
+    #: how many there are, and what they declare between them.
+    extended_headers = 0
+    extended_header_size = 0
 
 
 def _check_tar_sizes(tf: tarfile.TarFile) -> None:
@@ -425,9 +467,10 @@ def _check_tar_sizes(tf: tarfile.TarFile) -> None:
     time and the first one over a limit ends it, so an archive made to be
     huge is not walked to its end.
 
-    A sparse member is the one whose size is not what is written. The older
-    kind never gets here (see _CheckedTarInfo); the kind that a pax header
-    declares is known once the member is read, and is refused here.
+    A sparse member is the one whose size is not what is written. Most never
+    get here (see _CheckedTarInfo). One whose map is in its pax records does:
+    the map is read with them, within the limit on those, and the member is
+    refused here.
     """
     total_size = 0
     for member in tf:
@@ -445,7 +488,7 @@ def _check_tar_sizes(tf: tarfile.TarFile) -> None:
 
 def _safe_tar_extract(archive_path: Path, extract_dir: Path, resolved_root: Path) -> None:
     """Extract a tar archive with path traversal, symlink and size protection."""
-    with tarfile.open(archive_path, tarinfo=_CheckedTarInfo) as tf:
+    with _CheckedTarFile.open(archive_path) as tf:
         try:
             # On every Python: filter='data' looks at where a member goes
             # and what kind it is, not at how large it is.

@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Control bytes at the top of a text file with an unrecognised name no longer take the file out of a directory walk, of `--vet`, of the `heckler` pre-commit hook or of `--diff-only --all-text`. 260 of them in a comment were enough, and the run reported nothing. It now takes control bytes or invalid UTF-8 that come to more than a quarter of the file, and the file is named
 - A single control byte no longer makes a file shorter than 32 bytes binary
-- `--vet` applies its limits on unpacked size, 50 MB for a file and 500 MB for an archive, to tar archives on every Python version. They were checked on Python 3.11.0 to 3.11.3 only, so a tarball of a few KB could unpack to any size. A member that declares a negative size is refused, and so are a sparse member and a long-name or pax header of more than 1 MB, which those limits do not reach
+- `--vet` applies its limits on unpacked size, 50 MB for a file and 500 MB for an archive, to tar archives on every Python version. They were checked on Python 3.11.0 to 3.11.3 only, so a tarball of a few KB could unpack to any size. A member that declares a negative size is refused. So is what those limits do not reach: a sparse member, before its map is read, and the long-name or pax headers in front of one member when they come to more than 1 MB, or to more than 16 headers
 - A file or directory name printed in a note or a warning has its control and invisible characters spelled out as `<U+XXXX>`, so a name cannot send an escape sequence or a line break to the terminal
 
 ## [1.1.0] - 2026-11-11
