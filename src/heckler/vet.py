@@ -21,9 +21,11 @@ import urllib.request
 import zipfile
 import zlib
 from pathlib import Path
+from typing import Self
 
 from .config import Config
 from .formatters import get_formatter
+from .formatters.text import spell_out
 from .scanner import Finding, Scanner
 
 _NPM_REGISTRY = "https://registry.npmjs.org"
@@ -362,18 +364,70 @@ _ARCHIVE_ERRORS = (
 _MAX_EXTRACT_SIZE = 50 * 1024 * 1024
 # 500 MB total extraction limit
 _MAX_TOTAL_SIZE = 500 * 1024 * 1024
+# 1 MB for a header that carries a long name or pax records. A path is a
+# few KB at the most, and tarfile reads the whole of such a header into
+# memory, whatever size it declares.
+_MAX_EXTENDED_HEADER_SIZE = 1024 * 1024
+
+# The headers that are not members: what follows one is the name, the link
+# target or the pax records of the member after it.
+_EXTENDED_HEADER_TYPES = (
+    tarfile.GNUTYPE_LONGNAME,
+    tarfile.GNUTYPE_LONGLINK,
+    tarfile.XHDTYPE,
+    tarfile.XGLTYPE,
+    tarfile.SOLARIS_XHDTYPE,
+)
+
+
+def _sparse_file(name: str) -> _UnsafeArchiveError:
+    """The refusal of a sparse member.
+
+    Its size is the one its file is said to have. What unpacking copies for
+    it is what its map says, read from wherever in the archive that reaches,
+    and the file is cut down to the size afterwards. No limit on the size
+    holds for that, and a package has no use for a sparse file.
+    """
+    return _UnsafeArchiveError(f"Archive contains a sparse file: {spell_out(name)}")
+
+
+class _CheckedTarInfo(tarfile.TarInfo):
+    """A tar header that is checked before tarfile reads what it announces.
+
+    tarfile makes every header with frombuf(), a member's or not, and only
+    then reads what the header says comes after it. For a long name, for pax
+    records and for the map of a sparse file of the older kind it reads all
+    of that into memory, before there is a member for _check_tar_sizes()
+    to see. So this is where they are refused: from the 512 bytes of the
+    header.
+    """
+
+    @classmethod
+    def frombuf(cls, buf: bytes | bytearray, encoding: str, errors: str) -> Self:
+        member = super().frombuf(buf, encoding, errors)
+        if member.type == tarfile.GNUTYPE_SPARSE:
+            raise _sparse_file(member.name)
+        if member.type in _EXTENDED_HEADER_TYPES and member.size > _MAX_EXTENDED_HEADER_SIZE:
+            raise _UnsafeArchiveError(f"Header too large ({member.size} bytes)")
+        return member
 
 
 def _check_tar_sizes(tf: tarfile.TarFile) -> None:
     """Refuse an archive whose members declare more than heckler will unpack.
 
-    The size in a member's header is what unpacking writes for it, so the
+    The size of a regular member is what unpacking writes for it, so the
     headers settle this before anything is written. They are read one at a
     time and the first one over a limit ends it, so an archive made to be
     huge is not walked to its end.
+
+    A sparse member is the one whose size is not what is written. The older
+    kind never gets here (see _CheckedTarInfo); the kind that a pax header
+    declares is known once the member is read, and is refused here.
     """
     total_size = 0
     for member in tf:
+        if member.issparse():
+            raise _sparse_file(member.name)
         if member.size < 0:
             # A header can say so, and it would come off the total.
             raise _UnsafeArchiveError(f"Invalid size ({member.size} bytes): {member.name}")
@@ -386,7 +440,7 @@ def _check_tar_sizes(tf: tarfile.TarFile) -> None:
 
 def _safe_tar_extract(archive_path: Path, extract_dir: Path, resolved_root: Path) -> None:
     """Extract a tar archive with path traversal, symlink and size protection."""
-    with tarfile.open(archive_path) as tf:
+    with tarfile.open(archive_path, tarinfo=_CheckedTarInfo) as tf:
         try:
             # On every Python: filter='data' looks at where a member goes
             # and what kind it is, not at how large it is.
