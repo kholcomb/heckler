@@ -250,14 +250,14 @@ In a requirements file, an exact pin (`name==1.2.3`) is checked against the inst
 Available on the [GitHub Marketplace](https://github.com/marketplace/actions/hecklerdetection). Use as a composite action:
 
 ```yaml
-- uses: kholcomb/heckler@v1
+- uses: kholcomb/heckler@v1.1.0
   with:
     scan-deps: true
     format: sarif
     upload-sarif: true  # Findings appear in GitHub Security tab
 ```
 
-`@v1` follows the newest 1.x.y release; use a full version such as `@v1.1.0` to pin one. Versions follow [Semantic Versioning](https://semver.org/).
+Every release is tagged with its full version, `vMAJOR.MINOR.PATCH`; there is no `v1` tag that follows the newest one. Versions follow [Semantic Versioning](https://semver.org/).
 
 Or invoke directly:
 

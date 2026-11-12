@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The note on stderr names the files that look binary, up to five of them, instead of counting them, and calls them `not scanned as text`, as `--vet` does in its report. A file that is mostly text is named there as well as scanned, because control characters and stretches of fewer than 32 characters between bytes that are not UTF-8 are not reported from it
 - `--diff-only --all-text` no longer drops a file that a changed Python package installed, without a word, because it looks binary. The file is read by the same rule, and named in the note when it is left out
 
+### Removed
+
+- The `v1` tag, which moved to the newest 1.x.y release. Releases are tagged with their full version only, so a workflow with `uses: kholcomb/heckler@v1` names one instead, such as `@v1.1.0`
+
 ### Fixed
 
 - A named pipe in a directory no longer hangs the scan. It is named in a warning, as a socket or a device is, and counts as not scanned (exit code 2 with `--ci`)
