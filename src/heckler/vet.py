@@ -21,7 +21,6 @@ import urllib.request
 import zipfile
 import zlib
 from pathlib import Path
-from typing import Self
 
 from .config import Config
 from .formatters import get_formatter
@@ -394,21 +393,27 @@ def _sparse_file(name: str) -> _UnsafeArchiveError:
 class _CheckedTarInfo(tarfile.TarInfo):
     """A tar header that is checked before tarfile reads what it announces.
 
-    tarfile makes every header with frombuf(), a member's or not, and only
-    then reads what the header says comes after it. For a long name, for pax
-    records and for the map of a sparse file of the older kind it reads all
-    of that into memory, before there is a member for _check_tar_sizes()
-    to see. So this is where they are refused: from the 512 bytes of the
-    header.
+    tarfile parses every header, a member's or not, and hands it to
+    _proc_member(), which reads what the header says comes after it. For a
+    long name, for pax records and for the map of a sparse file of the older
+    kind it reads all of that into memory, before there is a member for
+    _check_tar_sizes() to see. So this is where they are refused: from the
+    512 bytes of the header.
+
+    _proc_member() is not in tarfile's documentation. frombuf() is, but the
+    current releases of Python parse the headers of an archive without
+    calling it, so a check there does not run on them. The tests in
+    TestWhatTheSizeOfAMemberDoesNotCover fail on a Python where this one
+    does not run either.
     """
 
-    @classmethod
-    def frombuf(cls, buf: bytes | bytearray, encoding: str, errors: str) -> Self:
-        member = super().frombuf(buf, encoding, errors)
-        if member.type == tarfile.GNUTYPE_SPARSE:
-            raise _sparse_file(member.name)
-        if member.type in _EXTENDED_HEADER_TYPES and member.size > _MAX_EXTENDED_HEADER_SIZE:
-            raise _UnsafeArchiveError(f"Header too large ({member.size} bytes)")
+    def _proc_member(self, tf: tarfile.TarFile) -> tarfile.TarInfo:
+        if self.type == tarfile.GNUTYPE_SPARSE:
+            raise _sparse_file(self.name)
+        if self.type in _EXTENDED_HEADER_TYPES and self.size > _MAX_EXTENDED_HEADER_SIZE:
+            raise _UnsafeArchiveError(f"Header too large ({self.size} bytes)")
+        # The stubs for tarfile leave the method out, as they do all that is private.
+        member: tarfile.TarInfo = super()._proc_member(tf)  # type: ignore[misc]
         return member
 
 
