@@ -714,7 +714,7 @@ class TestExtendedExtensions:
     def test_extension_actually_scanned(self, tmp_path: Path) -> None:
         """Smoke-test: a file with a non-obvious extension is scanned."""
         f = tmp_path / "test.zig"
-        f.write_text('const x = "\ufe01";\n')
+        f.write_text('const x = "\ufe01";\n', encoding="utf-8")
         assert len(Scanner().scan_file(f)) == 1
 
 
@@ -758,21 +758,21 @@ class TestDepScanExtensions:
         """Dep scanning picks up source files inside vendor/."""
         pkg = tmp_path / "vendor" / "some-crate"
         pkg.mkdir(parents=True)
-        (pkg / "lib.rs").write_text('let x = "\ufe01";\n')
+        (pkg / "lib.rs").write_text('let x = "\ufe01";\n', encoding="utf-8")
         findings = Scanner(scan_deps=True).scan_path(tmp_path)
         assert any(".rs" in f.file for f in findings)
 
     def test_scan_deps_includes_target_dir(self, tmp_path: Path) -> None:
         target = tmp_path / "target" / "debug" / "build" / "some-crate"
         target.mkdir(parents=True)
-        (target / "lib.rs").write_text('let x = "\ufe01";\n')
+        (target / "lib.rs").write_text('let x = "\ufe01";\n', encoding="utf-8")
         findings = Scanner(scan_deps=True).scan_path(tmp_path)
         assert any("target" in f.file for f in findings)
 
     def test_target_skipped_without_scan_deps(self, tmp_path: Path) -> None:
         target = tmp_path / "target" / "debug"
         target.mkdir(parents=True)
-        (target / "lib.rs").write_text('let x = "\ufe01";\n')
+        (target / "lib.rs").write_text('let x = "\ufe01";\n', encoding="utf-8")
         findings = Scanner(scan_deps=False).scan_path(tmp_path)
         assert not any("target" in f.file for f in findings)
 
@@ -803,12 +803,12 @@ class TestKnownFilenames:
 
     def test_known_filename_actually_scanned(self, tmp_path: Path) -> None:
         """Smoke-test: a Makefile in a directory walk is picked up."""
-        (tmp_path / "Makefile").write_text('VAR = "\ufe01"\n')
+        (tmp_path / "Makefile").write_text('VAR = "\ufe01"\n', encoding="utf-8")
         findings = Scanner().scan_path(tmp_path)
         assert any("Makefile" in f.file for f in findings)
 
     def test_unknown_extensionless_file_is_scanned_for_holding_text(self, tmp_path: Path) -> None:
-        (tmp_path / "randomfile").write_text('VAR = "\ufe01"\n')
+        (tmp_path / "randomfile").write_text('VAR = "\ufe01"\n', encoding="utf-8")
         assert Scanner().scan_path(tmp_path)
 
 
@@ -876,7 +876,7 @@ class TestEncodingDetection:
     def test_utf8_still_works(self, tmp_path: Path) -> None:
         """Regression: normal UTF-8 files must still be scanned."""
         f = tmp_path / "normal.js"
-        f.write_text('const x = "\u202e";\n')
+        f.write_text('const x = "\u202e";\n', encoding="utf-8")
         findings = Scanner().scan_file(f)
         assert len(findings) == 1
 

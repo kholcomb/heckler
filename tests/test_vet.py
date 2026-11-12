@@ -446,7 +446,7 @@ class TestWhatTheSizeOfAMemberDoesNotCover:
         monkeypatch.setattr(vet, "_MAX_EXTENDED_HEADER_SIZE", 150)  # one name, and not two
         out = tmp_path / "out"
         self._unpack(tar_path, out)
-        assert sorted(str(p.relative_to(out)) for p in out.glob("*/*")) == names
+        assert sorted(p.relative_to(out).as_posix() for p in out.glob("*/*")) == names
         monkeypatch.setattr(vet, "_MAX_EXTENDED_HEADERS", 0)
         with pytest.raises(_UnsafeArchiveError, match=r"Too many headers in a row \(1\)"):
             self._unpack(tar_path, tmp_path / "again")
