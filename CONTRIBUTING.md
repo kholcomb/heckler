@@ -54,10 +54,11 @@ pre-commit run --all-files
 
 ## Running Checks
 
-The CI pipeline runs the following on Python 3.11 through 3.14. Please ensure
-they all pass locally before opening a pull request. CI also runs the commit
-hooks and the action in `action.yml`; there is nothing to run locally for
-those.
+The CI pipeline runs the following on Python 3.11 through 3.14 on Linux, and
+on Python 3.12 on Windows and macOS. Please ensure they all pass locally
+before opening a pull request. CI also runs the commit hooks and the action
+in `action.yml`, builds the package and installs the wheel, and lints the
+workflows with actionlint; there is nothing to run locally for those.
 
 **Linting (Ruff):**
 
@@ -82,6 +83,12 @@ pytest --cov=heckler --cov-report=term-missing
 ```bash
 mypy src/
 pyright
+```
+
+**Workflows**, after a change to a workflow or to `action.yml`:
+
+```bash
+zizmor --offline .
 ```
 
 **Self-scan:**

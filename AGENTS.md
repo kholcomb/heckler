@@ -26,10 +26,11 @@ ruff check src/ tests/
 ruff format --check src/ tests/         # drop --check to rewrite
 mypy src/                               # strict
 pyright                                 # strict, src/ only ([tool.pyright] in pyproject.toml)
+zizmor --offline .                      # after a change to a workflow or to action.yml
 python -m heckler --ci --severity low . # self-scan: the tree must hold none of the characters
 ```
 
-CI (`.github/workflows/ci.yml`) runs lint, format, tests and the self-scan on Python 3.11 to 3.14, and mypy and Pyright once. It also runs the hooks in `.pre-commit-config.yaml`, and then the shipped `heckler` hook and the action in `action.yml`: each on the tree, which has to pass, and on a file with a character planted at run time, which has to fail. Run the self-scan as `python -m heckler` from the development environment, so that it is the working tree that runs.
+CI (`.github/workflows/ci.yml`) runs lint, format, tests and the self-scan on Python 3.11 to 3.14 on Linux and on 3.12 on Windows and macOS, and mypy and Pyright once. It also runs the hooks in `.pre-commit-config.yaml`, and then the shipped `heckler` hook and the action in `action.yml`: each on the tree, which has to pass, and on a file with a character planted at run time, which has to fail. It builds the package and installs the wheel with no index, so that a runtime dependency fails there, and it lints the workflows with actionlint and zizmor. Run the self-scan as `python -m heckler` from the development environment, so that it is the working tree that runs.
 
 ## Architecture
 
