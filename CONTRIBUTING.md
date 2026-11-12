@@ -37,14 +37,16 @@ basics of setting up a development environment and submitting changes.
 
 - **On commit**, staged Python files are linted with `ruff check --fix` and
   formatted with `ruff format`. If a hook changes a file the commit stops;
-  review the change, `git add` it, and commit again.
+  review the change, `git add` it, and commit again. A commit that touches
+  `src/` is also type checked, by mypy and by Pyright, both in strict mode
+  and both over the whole of `src/`.
 - **On the commit message**, the subject line must follow
   [Conventional Commits](https://www.conventionalcommits.org/):
   `type(optional scope): description`, where the type is one of `build`,
   `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`
   or `test`. For example: `fix(scanner): scan past NUL bytes`.
 
-To run the lint and format hooks over the whole tree:
+To run the lint, format and type check hooks over the whole tree:
 
 ```bash
 pre-commit run --all-files
@@ -77,6 +79,7 @@ pytest --cov=heckler --cov-report=term-missing
 
 ```bash
 mypy src/
+pyright
 ```
 
 **Self-scan:**
@@ -95,6 +98,8 @@ heckler --ci --severity low .
   tables that are aligned by hand are wrapped in `# fmt: off` / `# fmt: on`.
 - Mypy is configured in strict mode. All public functions should have type
   annotations.
+- Pyright is configured in strict mode as well, under `[tool.pyright]` in
+  `pyproject.toml`, for `src/`. CI and the commit hook run both.
 
 ## Dependency Updates
 

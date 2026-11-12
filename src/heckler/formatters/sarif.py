@@ -110,7 +110,7 @@ def format_sarif(findings: list[Finding], **kwargs: object) -> str:
         cat: i for i, cat in enumerate(cat for cat in ThreatCategory if cat in used_categories)
     }
 
-    results = []
+    results: list[dict[str, object]] = []
     for f in findings:
         result: dict[str, object] = {
             "ruleId": _CATEGORY_RULES[f.category]["id"],

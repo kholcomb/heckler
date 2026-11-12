@@ -47,3 +47,4 @@ jobs:
           python-version: '3.12'
       - run: pip install -e ".[dev]"
       - run: mypy src/
+      - run: pyright

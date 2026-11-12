@@ -390,10 +390,10 @@ _EMOJI_BASE_RANGES: tuple[tuple[int, int], ...] = (
 )
 # fmt: on
 _EMOJI_BASE_STARTS = tuple(lo for lo, _ in _EMOJI_BASE_RANGES)
-_KEYCAP_BASES = frozenset("0123456789#*")
+KEYCAP_BASES = frozenset("0123456789#*")
 _COMBINING_ENCLOSING_KEYCAP = "\u20e3"
 PRESENTATION_SELECTORS = frozenset({0xFE0E, 0xFE0F})
-_ZERO_WIDTH_JOINER = 0x200D
+ZERO_WIDTH_JOINER = 0x200D
 
 # The flags of England, Scotland and Wales: a black flag, the region code
 # spelled in tag characters, and a cancel tag. Unicode's emoji-sequences.txt
@@ -456,11 +456,11 @@ def is_emoji_context(text: str, index: int) -> bool:
     if cp in PRESENTATION_SELECTORS:
         if nxt and _is_variation_selector(nxt):
             return False
-        if prev in _KEYCAP_BASES:
+        if prev in KEYCAP_BASES:
             return nxt == _COMBINING_ENCLOSING_KEYCAP
         return bool(prev) and _is_emoji_base(prev)
 
-    if cp == _ZERO_WIDTH_JOINER:
+    if cp == ZERO_WIDTH_JOINER:
         if not nxt or not _is_emoji_base(nxt):
             return False
         if prev and ord(prev) == 0xFE0F:

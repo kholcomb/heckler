@@ -18,6 +18,7 @@ import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 from .characters import Severity
 from .formatters.text import spell_out
@@ -33,7 +34,7 @@ class Config:
     skip_dirs: frozenset[str] = field(default_factory=lambda: DEFAULT_SKIP_DIRS)
     text_extensions: frozenset[str] = field(default_factory=lambda: DEFAULT_TEXT_EXTENSIONS)
     severity_threshold: Severity = Severity.LOW
-    exclude_patterns: list[str] = field(default_factory=list)
+    exclude_patterns: list[str] = field(default_factory=list[str])
     allow_bom: bool = True
     scan_deps: bool = False
     allow_emoji: bool = True
@@ -119,8 +120,11 @@ def _boolean(raw: dict[str, object], key: str, source: str) -> bool:
 
 def _strings(raw: dict[str, object], key: str, source: str) -> list[str]:
     value = raw[key]
-    if isinstance(value, list) and all(isinstance(item, str) for item in value):
-        return list(value)
+    if isinstance(value, list):
+        items = cast("list[object]", value)
+        strings = [item for item in items if isinstance(item, str)]
+        if len(strings) == len(items):
+            return strings
     raise ConfigError(f"{source}: {key} must be a list of strings, not {value!r}")
 
 
@@ -137,8 +141,8 @@ def _load_pyproject_section() -> dict[str, object]:
     tool = data.get("tool", {})
     if not isinstance(tool, dict):
         return {}
-    result = tool.get("heckler", {})
-    return result if isinstance(result, dict) else {}
+    result = cast("dict[str, object]", tool).get("heckler")
+    return cast("dict[str, object]", result) if isinstance(result, dict) else {}
 
 
 # ---------------------------------------------------------------------------

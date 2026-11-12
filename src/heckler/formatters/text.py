@@ -92,7 +92,7 @@ def format_text(findings: list[Finding], *, color: bool = True, quiet: bool = Fa
 
     if not quiet:
         lines.append("")
-        summary_parts = []
+        summary_parts: list[str] = []
         for sev in Severity:
             if sev in counts:
                 label = f"{counts[sev]} {sev.value.upper()}"
