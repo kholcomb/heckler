@@ -60,11 +60,12 @@ on Python 3.12 on Windows and macOS. Please ensure they all pass locally
 before opening a pull request. CI also runs the commit hooks and the action
 in `action.yml`, uploads the action's scan of the tree to code scanning, and
 builds the package. It installs the wheel with no index, checks that its
-metadata requires nothing outside an extra, and imports every module from it.
-It lints the workflows, `action.yml` and the example workflow with actionlint
-and zizmor. There is nothing to run locally for the hooks, the action, the
-upload, the wheel or actionlint. A pull request from a fork cannot upload, so
-its merge waits on a maintainer.
+metadata requires nothing outside an extra, and imports every module from it,
+except `__main__`, which it runs with `--version`. It lints the workflows and
+the example workflow with actionlint, and the workflows, `action.yml` and the
+example workflow with zizmor. There is nothing to run locally for the hooks,
+the action, the upload, the wheel or actionlint. A pull request from a fork
+cannot upload, so its merge waits on a maintainer.
 
 **Linting (Ruff):**
 
