@@ -13,7 +13,7 @@ jobs:
       # One version failing should not hide the results for the others.
       fail-fast: false
       matrix:
-        python-version: ['3.11', '3.12', '3.13']
+        python-version: ['3.11', '3.12', '3.13', '3.14']
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
@@ -48,3 +48,74 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: mypy src/
       - run: pyright
+
+  hooks:
+    name: Commit hooks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
+        with:
+          python-version: '3.12'
+      - run: pip install -e ".[dev]"
+
+      # .pre-commit-config.yaml, the hooks for working on heckler. The
+      # commit-msg hook does not run: there is no message here to check.
+      - name: Hooks of this repository
+        run: pre-commit run --all-files --show-diff-on-failure
+
+      # .pre-commit-hooks.yaml, the hooks heckler ships. pre-commit installs
+      # them from this commit, as it does for a repository that uses them.
+      # The lockfile hook is installed and then skipped: no lockfile is
+      # tracked here.
+      - name: Shipped hooks pass the tree
+        run: pre-commit try-repo . --all-files
+
+      # The finding is the wanted result, so GITHUB_ACTIONS is unset for the
+      # hook: with it, heckler also writes each finding as an error on the run.
+      - name: Shipped hook fails on a planted character
+        run: |
+          mkdir planted
+          python - <<'EOF'
+          from pathlib import Path
+          Path("planted/expected-finding.py").write_text("# " + chr(0x202E) + "\n", encoding="utf-8")
+          EOF
+          if env -u GITHUB_ACTIONS pre-commit try-repo . heckler --files planted/expected-finding.py; then
+            echo "::error::The heckler hook passed a file that holds U+202E."
+            exit 1
+          fi
+
+  action:
+    name: Action
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      # action.yml from this commit, with no inputs: what a workflow gets
+      # when it only names the action.
+      - name: Action passes the tree
+        uses: ./
+
+      - name: Plant a character
+        run: |
+          mkdir planted
+          python3 - <<'EOF'
+          from pathlib import Path
+          Path("planted/expected-finding.py").write_text("# " + chr(0x202E) + "\n", encoding="utf-8")
+          EOF
+
+      # JSON, because the text report also writes each finding as an error
+      # on the run, and this finding is the wanted result.
+      - name: Action fails on a planted character
+        id: planted
+        continue-on-error: true
+        uses: ./
+        with:
+          path: planted
+          format: json
+
+      - name: Check that the action failed
+        if: steps.planted.outcome != 'failure'
+        run: |
+          echo "::error::The action passed a file that holds U+202E."
+          exit 1
