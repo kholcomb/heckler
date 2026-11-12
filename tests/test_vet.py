@@ -8,6 +8,7 @@ import json
 import tarfile
 import unittest.mock
 import urllib.error
+import warnings
 import zipfile
 from collections.abc import Callable
 from contextlib import AbstractContextManager
@@ -19,6 +20,7 @@ import pytest
 from heckler import vet
 from heckler.config import Config
 from heckler.vet import (
+    _check_tar_sizes,
     _download_npm,
     _download_pypi,
     _parse_spec,
@@ -159,6 +161,324 @@ class TestSafeTarExtract:
         extract_dir.mkdir()
         with pytest.raises(_UnsafeArchiveError, match="(?i)unsafe|link|absolute"):
             _safe_tar_extract(tar_path, extract_dir, extract_dir.resolve())
+
+
+class TestTarSizeLimits:
+    """The limits on what an archive unpacks to hold on every Python.
+
+    They were checked only in the fallback for a Python whose tarfile has no
+    'data' filter. Where it has one, which is every current release, a 61 KB
+    archive unpacked to a 60 MB file: the filter looks at where a member
+    goes and what kind it is, not at how large it is.
+
+    No archive here is large or unpacks to anything large. The limits are
+    lowered to about a kilobyte for the test, and the members are zeros.
+    """
+
+    @pytest.fixture(params=["data filter", "no filter"])
+    def extract(
+        self, request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> Callable[[Path], Path]:
+        """Unpack an archive into a new directory, with and without the filter."""
+        if request.param == "no filter":
+            real = tarfile.TarFile.extractall
+
+            def extractall(
+                self: tarfile.TarFile, path: Any = ".", members: Any = None, **options: Any
+            ) -> None:
+                if "filter" in options:  # the answer of Python 3.11.0 to 3.11.3
+                    raise TypeError("extractall() got an unexpected keyword argument 'filter'")
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", DeprecationWarning)
+                    real(self, path, members)
+
+            monkeypatch.setattr(tarfile.TarFile, "extractall", extractall)
+
+        def run(tar_path: Path) -> Path:
+            extract_dir = tmp_path / "out"
+            extract_dir.mkdir()
+            _safe_tar_extract(tar_path, extract_dir, extract_dir.resolve())
+            return extract_dir
+
+        return run
+
+    def _make_tar(self, tmp_path: Path, entries: dict[str, bytes]) -> Path:
+        tar_path = tmp_path / "test.tar.gz"
+        with tarfile.open(tar_path, "w:gz") as tf:
+            for name, content in entries.items():
+                info = tarfile.TarInfo(name=name)
+                info.size = len(content)
+                tf.addfile(info, io.BytesIO(content))
+        return tar_path
+
+    def test_member_over_the_limit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extract: Callable[[Path], Path]
+    ) -> None:
+        monkeypatch.setattr(vet, "_MAX_EXTRACT_SIZE", 1000)
+        tar_path = self._make_tar(tmp_path, {"small.txt": b"ok", "big.bin": b"\x00" * 1001})
+        with pytest.raises(_UnsafeArchiveError, match=r"File too large \(1001 bytes\): big\.bin"):
+            extract(tar_path)
+        assert list((tmp_path / "out").iterdir()) == [], "checked before anything is written"
+
+    def test_member_at_the_limit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extract: Callable[[Path], Path]
+    ) -> None:
+        monkeypatch.setattr(vet, "_MAX_EXTRACT_SIZE", 1000)
+        tar_path = self._make_tar(tmp_path, {"small.txt": b"ok", "big.bin": b"\x00" * 1000})
+        assert sorted(p.name for p in extract(tar_path).iterdir()) == ["big.bin", "small.txt"]
+
+    def test_total_over_the_limit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extract: Callable[[Path], Path]
+    ) -> None:
+        monkeypatch.setattr(vet, "_MAX_TOTAL_SIZE", 1500)
+        entries = {f"part{number}.bin": b"\x00" * 600 for number in range(3)}
+        tar_path = self._make_tar(tmp_path, entries)
+        with pytest.raises(_UnsafeArchiveError, match="Total extraction size exceeds 1500 bytes"):
+            extract(tar_path)
+        assert list((tmp_path / "out").iterdir()) == []
+
+    def test_reading_stops_at_the_first_member_over_the_limit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Headers are read one at a time, so a huge archive is not walked to its end."""
+        monkeypatch.setattr(vet, "_MAX_EXTRACT_SIZE", 1000)
+        entries = {"big.bin": b"\x00" * 1001}
+        entries.update({f"file{number}.txt": b"x" for number in range(200)})
+        tar_path = self._make_tar(tmp_path, entries)
+
+        headers_read = []
+        real = tarfile.TarFile.next
+
+        def counting_next(self: tarfile.TarFile) -> tarfile.TarInfo | None:
+            headers_read.append(1)
+            return real(self)
+
+        monkeypatch.setattr(tarfile.TarFile, "next", counting_next)
+        extract_dir = tmp_path / "out"
+        extract_dir.mkdir()
+        with pytest.raises(_UnsafeArchiveError, match="File too large"):
+            _safe_tar_extract(tar_path, extract_dir, extract_dir.resolve())
+        assert len(headers_read) < 5
+
+    def test_member_that_declares_a_negative_size(self) -> None:
+        """A size below zero would otherwise be taken off the total."""
+        member = tarfile.TarInfo("negative.bin")
+        member.size = -256
+        with pytest.raises(
+            _UnsafeArchiveError, match=r"Invalid size \(-256 bytes\): negative\.bin"
+        ):
+            _check_tar_sizes([member])  # type: ignore[arg-type]
+
+    def test_archive_whose_header_declares_a_negative_size(self, tmp_path: Path) -> None:
+        """Refused on every Python, by tarfile where it checks this itself.
+
+        Newer releases of tarfile reject such a header when the archive is
+        opened; on the ones before, heckler's own check does. The archive is
+        one header with nothing behind it.
+        """
+        header = bytearray(tarfile.TarInfo("negative.bin").tobuf(tarfile.GNU_FORMAT))
+        header[124:136] = b"\xff" * 11 + b"\x00"  # the size field, in base 256: -256
+        header[148:156] = b" " * 8
+        header[148:156] = b"%06o\x00 " % sum(header)
+        tar_path = tmp_path / "negative.tar"
+        tar_path.write_bytes(bytes(header) + b"\x00" * 1024)
+        extract_dir = tmp_path / "out"
+        extract_dir.mkdir()
+        with pytest.raises((_UnsafeArchiveError, tarfile.ReadError)):
+            _safe_tar_extract(tar_path, extract_dir, extract_dir.resolve())
+        assert list(extract_dir.iterdir()) == []
+
+
+def _raw_header(name: str, kind: bytes, size: int) -> bytearray:
+    """One tar header of the type *kind* that declares *size* bytes behind it."""
+    info = tarfile.TarInfo(name)
+    info.type = kind
+    info.size = size
+    return bytearray(info.tobuf(tarfile.GNU_FORMAT))
+
+
+def _resealed(header: bytearray) -> bytes:
+    """*header* with the checksum of what it holds now."""
+    header[148:156] = b" " * 8
+    header[148:156] = b"%06o\x00 " % sum(header)
+    return bytes(header)
+
+
+class TestWhatTheSizeOfAMemberDoesNotCover:
+    """The size of a member is not all that tarfile writes or reads for an archive.
+
+    A sparse member reports the size its file is said to have, and unpacking
+    copies what the archive stores for it, which can be any amount more,
+    before it cuts the file down. A header that carries a long name or pax
+    records is not a member at all, and tarfile reads the whole of it into
+    memory: one that declared 32 MB of zeros made a 144-byte archive take
+    100 MB. Both went past the limits, so both are refused.
+
+    Nothing here is large. A header that declares 32 MB has nothing behind it.
+    """
+
+    def _unpack(self, tar_path: Path, out: Path) -> None:
+        out.mkdir()
+        _safe_tar_extract(tar_path, out, out.resolve())
+
+    @pytest.fixture
+    def low_limits(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(vet, "_MAX_EXTRACT_SIZE", 1000)
+        monkeypatch.setattr(vet, "_MAX_TOTAL_SIZE", 1500)
+
+    def test_sparse_member_is_refused(self, tmp_path: Path, low_limits: None) -> None:
+        """Its header stores 2,048 bytes and says the file is one byte long."""
+        header = _raw_header("sparse.bin", tarfile.GNUTYPE_SPARSE, 2048)
+        header[386:410] = b"%011o\x00%011o\x00" % (0, 2048)  # one piece: all of it
+        header[483:495] = b"%011o\x00" % 1  # the size the file is said to have
+        tar_path = tmp_path / "sparse.tar"
+        tar_path.write_bytes(_resealed(header) + b"\x00" * (2048 + 1024))
+        with pytest.raises(_UnsafeArchiveError, match="sparse file: sparse.bin"):
+            self._unpack(tar_path, tmp_path / "out")
+        assert list((tmp_path / "out").iterdir()) == []
+
+    def test_sparse_member_declared_in_a_pax_header_is_refused(
+        self, tmp_path: Path, low_limits: None
+    ) -> None:
+        """The same, in the format that keeps the map in front of the data."""
+        data = b"1\n0\n1536\n".ljust(512, b"\x00") + b"\x00" * 1536
+        info = tarfile.TarInfo("GNUSparseFile.0/sparse.bin")
+        info.size = len(data)
+        info.pax_headers = {
+            "GNU.sparse.major": "1",
+            "GNU.sparse.minor": "0",
+            "GNU.sparse.name": "sparse.bin",
+            "GNU.sparse.realsize": "1",
+        }
+        tar_path = tmp_path / "sparse.tar"
+        with tarfile.open(tar_path, "w", format=tarfile.PAX_FORMAT) as tf:
+            tf.addfile(info, io.BytesIO(data))
+        with pytest.raises(_UnsafeArchiveError, match="sparse file: sparse.bin"):
+            self._unpack(tar_path, tmp_path / "out")
+        assert list((tmp_path / "out").iterdir()) == []
+
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            tarfile.GNUTYPE_LONGNAME,
+            tarfile.GNUTYPE_LONGLINK,
+            tarfile.XHDTYPE,
+            tarfile.XGLTYPE,
+            tarfile.SOLARIS_XHDTYPE,
+        ],
+        ids=["long name", "long link", "pax", "pax global", "solaris pax"],
+    )
+    def test_extended_header_over_the_limit_is_refused_for_what_it_declares(
+        self, tmp_path: Path, kind: bytes
+    ) -> None:
+        tar_path = tmp_path / "header.tar"
+        header = _raw_header("././@LongLink", kind, 32 * 1024 * 1024)
+        tar_path.write_bytes(bytes(header) + b"\x00" * 1024)
+        with pytest.raises(_UnsafeArchiveError, match=r"Header too large \(33554432 bytes\)"):
+            self._unpack(tar_path, tmp_path / "out")
+
+    @pytest.mark.parametrize(
+        "tar_format", [tarfile.GNU_FORMAT, tarfile.PAX_FORMAT], ids=["gnu", "pax"]
+    )
+    def test_long_name_is_unpacked(self, tmp_path: Path, tar_format: int) -> None:
+        """A name over 100 bytes is what these headers are for."""
+        name = "package/" + "d" * 80 + "/" + "f" * 80 + ".txt"
+        info = tarfile.TarInfo(name)
+        info.size = 2
+        tar_path = tmp_path / "long.tar"
+        with tarfile.open(tar_path, "w", format=tar_format) as tf:
+            tf.addfile(info, io.BytesIO(b"ok"))
+        self._unpack(tar_path, tmp_path / "out")
+        assert (tmp_path / "out" / name).read_bytes() == b"ok"
+
+    def test_extended_header_at_the_limit_is_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        name = "package/" + "d" * 80 + "/" + "f" * 80 + ".txt"
+        monkeypatch.setattr(vet, "_MAX_EXTENDED_HEADER_SIZE", len(name) + 1)  # and its NUL
+        info = tarfile.TarInfo(name)
+        tar_path = tmp_path / "long.tar"
+        with tarfile.open(tar_path, "w", format=tarfile.GNU_FORMAT) as tf:
+            tf.addfile(info)
+        self._unpack(tar_path, tmp_path / "out")
+        assert (tmp_path / "out" / name).exists()
+        monkeypatch.setattr(vet, "_MAX_EXTENDED_HEADER_SIZE", len(name))
+        with pytest.raises(_UnsafeArchiveError, match="Header too large"):
+            self._unpack(tar_path, tmp_path / "again")
+
+    def _member(self, name: str, data: bytes) -> bytes:
+        """A regular member: its header and its data, filled up to the block."""
+        info = tarfile.TarInfo(name)
+        info.size = len(data)
+        return info.tobuf(tarfile.GNU_FORMAT) + data.ljust(-(-len(data) // 512) * 512, b"\x00")
+
+    def test_headers_in_a_row_are_held_to_the_limit_together(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Each one is within the limit, and tarfile holds them all until the member."""
+        monkeypatch.setattr(vet, "_MAX_EXTENDED_HEADER_SIZE", 1024)
+        long_name = bytes(_raw_header("././@LongLink", tarfile.GNUTYPE_LONGNAME, 1024))
+        name = b"package/a.txt".ljust(1024, b"\x00")
+        tar_path = tmp_path / "run.tar"
+        tar_path.write_bytes((long_name + name) * 2 + self._member("a.txt", b"ok") + b"\x00" * 1024)
+        with pytest.raises(_UnsafeArchiveError, match=r"Header too large \(2048 bytes\)"):
+            self._unpack(tar_path, tmp_path / "out")
+        assert list((tmp_path / "out").iterdir()) == []
+
+    def test_long_run_of_headers_is_refused(self, tmp_path: Path) -> None:
+        """They declare nothing, so no size stops them, and tarfile calls itself for each."""
+        empty = bytes(_raw_header("././@LongLink", tarfile.GNUTYPE_LONGNAME, 0))
+        tar_path = tmp_path / "run.tar"
+        tar_path.write_bytes(empty * 1000 + self._member("a.txt", b"ok") + b"\x00" * 1024)
+        with pytest.raises(_UnsafeArchiveError, match=r"Too many headers in a row \(17\)"):
+            self._unpack(tar_path, tmp_path / "out")
+
+    def test_run_of_headers_ends_at_a_member(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One header in front of each of two members is one in a row, twice."""
+        names = ["package/" + letter * 120 + ".txt" for letter in "ab"]
+        tar_path = tmp_path / "long.tar"
+        with tarfile.open(tar_path, "w", format=tarfile.GNU_FORMAT) as tf:
+            for name in names:
+                tf.addfile(tarfile.TarInfo(name))
+        monkeypatch.setattr(vet, "_MAX_EXTENDED_HEADERS", 1)
+        monkeypatch.setattr(vet, "_MAX_EXTENDED_HEADER_SIZE", 150)  # one name, and not two
+        out = tmp_path / "out"
+        self._unpack(tar_path, out)
+        assert sorted(str(p.relative_to(out)) for p in out.glob("*/*")) == names
+        monkeypatch.setattr(vet, "_MAX_EXTENDED_HEADERS", 0)
+        with pytest.raises(_UnsafeArchiveError, match=r"Too many headers in a row \(1\)"):
+            self._unpack(tar_path, tmp_path / "again")
+
+    def test_header_that_declares_a_negative_size_is_refused(self, tmp_path: Path) -> None:
+        """It would come off what the run declares, and an older tarfile reads on to the end."""
+        header = bytes(_raw_header("././@LongLink", tarfile.GNUTYPE_LONGNAME, -1024))
+        tar_path = tmp_path / "negative.tar"
+        tar_path.write_bytes(header + self._member("a.txt", b"ok") + b"\x00" * 1024)
+        with pytest.raises(_UnsafeArchiveError, match=r"Invalid size \(-1024 bytes\)"):
+            self._unpack(tar_path, tmp_path / "out")
+
+    def test_map_of_a_sparse_member_is_not_read(self, tmp_path: Path) -> None:
+        """Its map says it has a thousand million entries, and it is refused without them.
+
+        The entries are not there. A tarfile that went on to read them would
+        fail on that, and not with the refusal.
+        """
+        data = b"1000000000\n0\n".ljust(512, b"\x00")
+        info = tarfile.TarInfo("GNUSparseFile.0/sparse.bin")
+        info.size = len(data)
+        info.pax_headers = {
+            "GNU.sparse.major": "1",
+            "GNU.sparse.minor": "0",
+            "GNU.sparse.name": "sparse.bin",
+            "GNU.sparse.realsize": "1",
+        }
+        tar_path = tmp_path / "sparse.tar"
+        with tarfile.open(tar_path, "w", format=tarfile.PAX_FORMAT) as tf:
+            tf.addfile(info, io.BytesIO(data))
+        with pytest.raises(_UnsafeArchiveError, match="sparse file: sparse.bin"):
+            self._unpack(tar_path, tmp_path / "out")
 
 
 class TestDownloadNpm:
@@ -515,11 +835,44 @@ class TestVetPackage:
     def test_binary_files_are_named(
         self, tmp_path: Path, serve: Serve, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        blob = b"\x89PNG\x00\x00" + chr(0xA0).encode() * 10
+        blob = b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 4 + chr(0xA0).encode() * 10
         files = {"package/logo.png": blob, "package/index.js": b"1;\n"}
         serve([_tar_gz(tmp_path / "pkg-1.0.0.tgz", files)])
         assert self._vet("pkg@1.0.0") == 0
-        assert "  binary, not scanned: pkg-1.0.0.tgz/package/logo.png" in capsys.readouterr().out
+        assert (
+            "  binary, not scanned as text: pkg-1.0.0.tgz/package/logo.png"
+            in capsys.readouterr().out
+        )
+
+    def test_padding_does_not_take_a_text_file_out_of_the_scan(
+        self, tmp_path: Path, serve: Serve, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """300 NUL bytes in its first comment made the file binary, and the verdict CLEAN."""
+        text = b"// plain\n" * 200 + f"// {PLANTED_SELECTORS}\n".encode()
+        blob = b"// " + b"\x00" * 300 + b"\n" + text
+        serve([_tar_gz(tmp_path / "pkg-1.0.0.tgz", {"package/lib/loader": blob})])
+        assert self._vet("pkg@1.0.0") == 1
+        out = capsys.readouterr().out
+        assert "3 finding(s) (3 CRITICAL). DO NOT INSTALL." in out
+        assert "Variation Selector 2 (in a file that looks binary)" in out
+        assert "  binary, not scanned as text: pkg-1.0.0.tgz/package/lib/loader" in out
+
+    def test_archive_with_a_member_over_the_size_limit_is_not_unpacked(
+        self,
+        tmp_path: Path,
+        serve: Serve,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(vet, "_MAX_EXTRACT_SIZE", 1000)
+        serve([_tar_gz(tmp_path / "pkg-1.0.0.tgz", {"package/big.js": b"/" * 1001})])
+        assert self._vet("pkg@1.0.0") == 2
+        captured = capsys.readouterr()
+        assert "0 file(s) scanned, 0 findings, 1 file(s) not scanned. INCOMPLETE." in captured.out
+        assert (
+            "pkg-1.0.0.tgz was not scanned: it could not be unpacked"
+            " (File too large (1001 bytes): package/big.js)" in captured.err
+        )
 
     @pytest.mark.parametrize(
         "first_line",

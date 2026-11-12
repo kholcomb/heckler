@@ -10,10 +10,11 @@ from ._version import __version__
 from .characters import Severity
 from .config import Config, ConfigError, load_config
 from .formatters import get_formatter
+from .formatters.text import spell_out
 from .scanner import Finding, Scanner
 
-# How many skipped directories a note names before it counts the rest.
-_MAX_DIRS_NAMED = 5
+# How many skipped directories or files a note names before it counts the rest.
+_MAX_PATHS_NAMED = 5
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -188,7 +189,9 @@ def _build_scanner(args: argparse.Namespace, config: Config, *, scan_deps: bool)
 
 def _report_skipped(scanner: Scanner) -> list[str]:
     """Warn about each file the scanner could not read, and return the warnings."""
-    messages = [f"{path} was not scanned: {reason}" for path, reason in scanner.skipped]
+    # A name is written by whoever made the file. Spelled out, it cannot send
+    # an escape sequence or a line break to the terminal.
+    messages = [f"{spell_out(path)} was not scanned: {reason}" for path, reason in scanner.skipped]
     for message in messages:
         print(f"Warning: {message}", file=sys.stderr)
     return messages
@@ -231,20 +234,31 @@ def _finish(
     return 0
 
 
+def _name_some(paths: list[str]) -> str:
+    """The first few of *paths*, and how many more there are.
+
+    Each name is spelled out: a file left out as binary is named by whoever
+    made it, and an escape sequence or a line break in the name would hide
+    the note or add a line to it.
+    """
+    named = ", ".join(spell_out(path) for path in paths[:_MAX_PATHS_NAMED])
+    more = len(paths) - _MAX_PATHS_NAMED
+    return f"{named} and {more} more" if more > 0 else named
+
+
 def _report_suppressions(scanner: Scanner) -> None:
     """Say what the scan left out or held back, so that it is never nothing."""
     if scanner.skipped_dirs:
-        named = ", ".join(scanner.skipped_dirs[:_MAX_DIRS_NAMED])
-        more = len(scanner.skipped_dirs) - _MAX_DIRS_NAMED
-        if more > 0:
-            named += f" and {more} more"
+        named = _name_some(scanner.skipped_dirs)
         advice = "" if scanner.scan_deps else " --scan-deps scans dependency directories."
         print(f"Note: not scanned, skipped by directory name: {named}.{advice}", file=sys.stderr)
     if scanner.binary:
-        print(
-            f"Note: {len(scanner.binary)} file(s) look binary and were not scanned.",
-            file=sys.stderr,
-        )
+        # By name, so that a file made to be one of these can be told from
+        # the images and archives that are expected. "As text", because one
+        # that is mostly text was scanned for the text inside it, and may
+        # have findings in the report above.
+        named = _name_some(scanner.binary)
+        print(f"Note: not scanned as text, binary by content: {named}.", file=sys.stderr)
     if scanner.suppressed:
         print(
             f"Note: {sum(scanner.suppressed.values())} finding(s) suppressed in"

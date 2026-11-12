@@ -37,13 +37,13 @@ Everything is in `src/heckler/`.
 - `characters.py` is the data: the table of flagged code points with their severity and category, the compiled `DANGEROUS_UNICODE_RE`, and the rules for what counts as part of a well-formed emoji (reported at INFO instead of at full severity). The tables are static, so a result does not depend on the Unicode version of the interpreter that runs the scan.
 - `scanner.py` is the engine, in three layers that are worth keeping apart:
   1. **Which files** a directory walk scans: every file whose content is text. The extension and file-name lists are a floor under that check, not a filter: a listed name is scanned whatever its bytes are. Some directory names are skipped, and inside dependency directories the walk keeps to code unless `--all-text` is given. A file passed by name is always scanned, unless `--skip-binary` asks for the walk's rule.
-  2. **How bytes become text**: a file is read in the encoding it announces and, when the bytes disagree with that, in a second one as well, with each finding labelled by the reading it came from.
+  2. **How bytes become text**: a file is read in the encoding it announces and, when the bytes disagree with that, in a second one as well, with each finding labelled by the reading it came from. A file whose start looks binary but which is mostly text is read for its runs of valid UTF-8, without control characters and without directives, and is recorded in `binary` like every file that looks binary.
   3. **`scan_text`**, the core primitive: the regex, emoji handling, and `heckler-ignore` / `heckler-ignore-next-line` directives.
 
   The `Scanner` also records what it did not scan or did not report (`skipped`, `suppressed`, and similar lists). It prints nothing about them itself; the callers turn them into warnings and exit codes.
 - `cli.py` has three modes that share one ending, `_finish()`, which prints the report and picks the exit code: the plain scan, `--vet` (`vet.py`), and `--scan-deps --diff-only` (`lockfile.py`). Exit codes: 0 clean, 1 findings (with `--ci`), 2 something could not be scanned or the tool failed.
 - `lockfile.py` reads `git diff` of a lockfile, works out which packages were added or bumped (one parser per ecosystem), finds the installed copy of each in `node_modules` or a site-packages directory, and scans it.
-- `vet.py` downloads a package from the public npm or PyPI registry with the standard library alone, checks its checksum, unpacks it with path-traversal checks, and scans every text file in every archive. It never runs package code.
+- `vet.py` downloads a package from the public npm or PyPI registry with the standard library alone, checks its checksum, unpacks it with path-traversal and size checks, and scans every text file in every archive. It never runs package code.
 - `config.py` merges `.heckler.yml` and `[tool.heckler]` into a `Config`, and raises `ConfigError` for what it cannot read or use; `formatters/` renders text, JSON and SARIF.
 
 ## Rules the code is built around
@@ -51,9 +51,9 @@ Everything is in `src/heckler/`.
 Most review comments and most past fixes come back to these.
 
 - **Scanning nothing is an error, not a clean result.** A missing path, an unreadable or oversized file, a changed package that is not installed, a lockfile with no parser: each is named in a warning and, with `--ci`, fails the run with exit code 2 unless `--allow-unscanned` is given. New code paths that can skip something need the same treatment.
-- **Only being binary leaves a file out of a walk, and never a file whose name marks it as source.** A recognised name is scanned whatever the bytes are, no single byte (a NUL, a byte order mark) decides how or whether a file is read, and a file left out as binary is counted in the report. An attacker writes the content.
+- **Only being binary leaves a file out of a walk, and never a file whose name marks it as source.** A recognised name is scanned whatever the bytes are, no single byte (a NUL, a byte order mark) decides how or whether a file is read, and a file that looks binary is named in the report. Binary is settled over the whole file: one whose start looks binary is read in full, and is left out only when more than a quarter of it is control bytes or invalid UTF-8. With less, it is scanned for the text inside it and named all the same, because that reading leaves out control characters and short stretches. An attacker writes the content.
 - **Settings are read in full or not at all.** A configuration file that cannot be used as it is written is an error with exit code 2, never a quiet fall back to the defaults, which could switch a check off.
-- **Suppression cannot be forged.** A directive has to be a real comment, a directive without a code point list covers MEDIUM and below only, and directives are never honoured in dependency code or under `--scan-deps`.
+- **Suppression cannot be forged.** A directive has to be a real comment, a directive without a code point list covers MEDIUM and below only, and directives are never honoured in dependency code, under `--scan-deps` or in a file that looks binary.
 - **No runtime dependencies, and nothing newer than Python 3.11** in syntax or standard library use. A library may check the code from the tests; the code may not import it.
 
 ## Things that have to stay in step

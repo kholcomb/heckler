@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Scanner.scan_path(path, by_content=True)` treats a file passed by name as a directory walk does, and leaves it out when its content is binary
+
+### Changed
+
+- A file with an unrecognised name whose first 8 KB look binary is read in full before it is left out. When no more than a quarter of its bytes are control bytes or invalid UTF-8 it is mostly text, and is scanned for the text inside it: every run of 32 or more characters that are valid UTF-8, without control characters and without `heckler-ignore` comments, with its findings marked `(in a file that looks binary)`. A file with more than that is left out as binary, as before
+- A binary format that is mostly text, such as a compiled translation catalog, is read by that rule and can produce findings. Add such files to the `allowlist` where the characters are expected
+- The note on stderr names the files that look binary, up to five of them, instead of counting them, and calls them `not scanned as text`, as `--vet` does in its report. A file that is mostly text is named there as well as scanned, because control characters and stretches of fewer than 32 characters between bytes that are not UTF-8 are not reported from it
+- `--diff-only --all-text` no longer drops a file that a changed Python package installed, without a word, because it looks binary. The file is read by the same rule, and named in the note when it is left out
+
+### Fixed
+
+- A named pipe in a directory no longer hangs the scan. It is named in a warning, as a socket or a device is, and counts as not scanned (exit code 2 with `--ci`)
+
+### Security
+
+- Control bytes at the top of a text file with an unrecognised name no longer take the file out of a directory walk, of `--vet`, of the `heckler` pre-commit hook or of `--diff-only --all-text`. 260 of them in a comment were enough, and the run reported nothing. It now takes control bytes or invalid UTF-8 that come to more than a quarter of the file, and the file is named
+- A single control byte no longer makes a file shorter than 32 bytes binary
+- `--vet` applies its limits on unpacked size, 50 MB for a file and 500 MB for an archive, to tar archives on every Python version. They were checked on Python 3.11.0 to 3.11.3 only, so a tarball of a few KB could unpack to any size. A member that declares a negative size is refused. So is what those limits do not reach: a sparse member, before its map is read, and the long-name or pax headers in front of one member when they come to more than 1 MB, or to more than 16 headers
+- A file or directory name printed in a note or a warning has its control and invisible characters spelled out as `<U+XXXX>`, so a name cannot send an escape sequence or a line break to the terminal
+
 ## [1.1.0] - 2026-11-11
 
 ### Added

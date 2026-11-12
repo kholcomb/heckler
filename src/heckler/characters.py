@@ -250,13 +250,17 @@ CHAR_DB: dict[int, CharInfo] = {
     ),
 }
 
-# Compiled regex covering all dangerous codepoint ranges
-DANGEROUS_UNICODE_RE = re.compile(
-    r'['
+# The control characters: everything that is flagged below U+00A0.
+_CONTROL_RANGES = (
     r'\x00-\x08'        # C0 controls before TAB
     r'\x0B\x0C'         # Line Tabulation, Form Feed
     r'\x0E-\x1F'        # C0 controls after CR, including Escape
     r'\x7F-\x9F'        # Delete and the C1 controls
+)
+
+# Everything else: the rest of the character class, and the classes for the
+# planes above the first.
+_OTHER_RANGES = (
     r'\u00A0'           # No-Break Space
     r'\u00AD'           # Soft Hyphen
     r'\u034F'           # Combining Grapheme Joiner
@@ -286,6 +290,15 @@ DANGEROUS_UNICODE_RE = re.compile(
     r'|[\U000E0000-\U000E0FFF]'
 )
 # fmt: on
+
+# Compiled regex covering all dangerous codepoint ranges
+DANGEROUS_UNICODE_RE = re.compile("[" + _CONTROL_RANGES + _OTHER_RANGES)
+
+# The same without the control characters, so from U+00A0 up. Padding, and
+# text read in an encoding it is not in, are full of control characters
+# that say nothing. A reading of such bytes reports with this pattern, and
+# does not stop at each of the rest to pass it over.
+DANGEROUS_NON_CONTROL_RE = re.compile("[" + _OTHER_RANGES)
 
 
 def get_char_info(cp: int) -> CharInfo:

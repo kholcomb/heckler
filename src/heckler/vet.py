@@ -24,6 +24,7 @@ from pathlib import Path
 
 from .config import Config
 from .formatters import get_formatter
+from .formatters.text import spell_out
 from .scanner import Finding, Scanner
 
 _NPM_REGISTRY = "https://registry.npmjs.org"
@@ -362,19 +363,144 @@ _ARCHIVE_ERRORS = (
 _MAX_EXTRACT_SIZE = 50 * 1024 * 1024
 # 500 MB total extraction limit
 _MAX_TOTAL_SIZE = 500 * 1024 * 1024
+# 1 MB for the headers that carry a long name or pax records in front of
+# one member, taken together. A path is a few KB at the most, and tarfile
+# reads the whole of such a header into memory, whatever size it declares,
+# and keeps it until it has read the member.
+_MAX_EXTENDED_HEADER_SIZE = 1024 * 1024
+# How many of them may come in a row. The formats call for two: a long name
+# and a long link target, or pax records for the archive and for the member.
+# tarfile calls itself for each one, so a run with no end is a stack with
+# no end, whatever the headers declare.
+_MAX_EXTENDED_HEADERS = 16
+
+# The headers that are not members: what follows one is the name, the link
+# target or the pax records of the member after it.
+_EXTENDED_HEADER_TYPES = (
+    tarfile.GNUTYPE_LONGNAME,
+    tarfile.GNUTYPE_LONGLINK,
+    tarfile.XHDTYPE,
+    tarfile.XGLTYPE,
+    tarfile.SOLARIS_XHDTYPE,
+)
+
+
+def _sparse_file(name: str) -> _UnsafeArchiveError:
+    """The refusal of a sparse member.
+
+    Its size is the one its file is said to have. What unpacking copies for
+    it is what its map says, read from wherever in the archive that reaches,
+    and the file is cut down to the size afterwards. No limit on the size
+    holds for that, and a package has no use for a sparse file.
+    """
+    return _UnsafeArchiveError(f"Archive contains a sparse file: {spell_out(name)}")
+
+
+class _CheckedTarInfo(tarfile.TarInfo):
+    """A tar header that is checked before tarfile reads what it announces.
+
+    tarfile parses every header, a member's or not, and hands it to
+    _proc_member(), which reads what the header says comes after it. For a
+    long name, for pax records and for the map of a sparse file of the older
+    kind it reads all of that into memory, before there is a member for
+    _check_tar_sizes() to see. So this is where they are refused: from the
+    512 bytes of the header.
+
+    _proc_member() is not in tarfile's documentation. frombuf() is, but the
+    current releases of Python parse the headers of an archive without
+    calling it, so a check there does not run on them. The tests in
+    TestWhatTheSizeOfAMemberDoesNotCover fail on a Python where this one
+    does not run either.
+    """
+
+    def _proc_member(self, tf: _CheckedTarFile) -> tarfile.TarInfo:
+        if self.type == tarfile.GNUTYPE_SPARSE:
+            raise _sparse_file(self.name)
+        if self.type in _EXTENDED_HEADER_TYPES:
+            # tarfile reads the header after this one before it lets go of
+            # this one, so the limits are on the run and not on each header.
+            if self.size < 0:
+                # It would come off the total, and an older tarfile reads to
+                # the end of the archive for it.
+                raise _UnsafeArchiveError(f"Invalid size ({self.size} bytes) in a header")
+            tf.extended_headers += 1
+            tf.extended_header_size += self.size
+            if tf.extended_header_size > _MAX_EXTENDED_HEADER_SIZE:
+                raise _UnsafeArchiveError(f"Header too large ({tf.extended_header_size} bytes)")
+            if tf.extended_headers > _MAX_EXTENDED_HEADERS:
+                raise _UnsafeArchiveError(f"Too many headers in a row ({tf.extended_headers})")
+        else:
+            tf.extended_headers = 0
+            tf.extended_header_size = 0
+        # The stubs for tarfile leave the method out, as they do all that is private.
+        member: tarfile.TarInfo = super()._proc_member(tf)  # type: ignore[misc]
+        return member
+
+    def _proc_gnusparse_10(
+        self, member: tarfile.TarInfo, pax_headers: dict[str, str], tf: tarfile.TarFile
+    ) -> None:
+        """Refuse a sparse member whose map is in front of its data, unread.
+
+        tarfile calls this to read that map, which is as long as it says it
+        is, and only then is there a member for _check_tar_sizes() to see.
+        The pax records that declare the member have been read by now, and
+        they are enough to refuse it.
+        """
+        raise _sparse_file(pax_headers.get("GNU.sparse.name") or member.name)
+
+
+class _CheckedTarFile(tarfile.TarFile):
+    """A tar archive that checks its headers as it reads them (see _CheckedTarInfo)."""
+
+    tarinfo = _CheckedTarInfo
+    #: The headers since the last member that are not members themselves:
+    #: how many there are, and what they declare between them.
+    extended_headers = 0
+    extended_header_size = 0
+
+
+def _check_tar_sizes(tf: tarfile.TarFile) -> None:
+    """Refuse an archive whose members declare more than heckler will unpack.
+
+    The size of a regular member is what unpacking writes for it, so the
+    headers settle this before anything is written. They are read one at a
+    time and the first one over a limit ends it, so an archive made to be
+    huge is not walked to its end.
+
+    A sparse member is the one whose size is not what is written. Most never
+    get here (see _CheckedTarInfo). One whose map is in its pax records does:
+    the map is read with them, within the limit on those, and the member is
+    refused here.
+    """
+    total_size = 0
+    for member in tf:
+        if member.issparse():
+            raise _sparse_file(member.name)
+        if member.size < 0:
+            # A header can say so, and it would come off the total.
+            raise _UnsafeArchiveError(f"Invalid size ({member.size} bytes): {member.name}")
+        if member.size > _MAX_EXTRACT_SIZE:
+            raise _UnsafeArchiveError(f"File too large ({member.size} bytes): {member.name}")
+        total_size += member.size
+        if total_size > _MAX_TOTAL_SIZE:
+            raise _UnsafeArchiveError(f"Total extraction size exceeds {_MAX_TOTAL_SIZE} bytes")
 
 
 def _safe_tar_extract(archive_path: Path, extract_dir: Path, resolved_root: Path) -> None:
-    """Extract a tar archive with path traversal and symlink protection."""
-    with tarfile.open(archive_path) as tf:
-        # filter='data' handles this natively. Python 3.11 has it from
-        # 3.11.4; before that, we validate manually.
+    """Extract a tar archive with path traversal, symlink and size protection."""
+    with _CheckedTarFile.open(archive_path) as tf:
         try:
-            tf.extractall(extract_dir, filter="data")
-            return
-        except TypeError:
-            # filter parameter not supported (Python 3.11.0 to 3.11.3)
-            pass
+            # On every Python: filter='data' looks at where a member goes
+            # and what kind it is, not at how large it is.
+            _check_tar_sizes(tf)
+            # filter='data' handles the rest natively. Python 3.11 has it
+            # from 3.11.4; before that, we validate manually.
+            try:
+                tf.extractall(extract_dir, filter="data")
+                return
+            except TypeError:
+                # filter parameter not supported (Python 3.11.0 to 3.11.3)
+                pass
         except tarfile.TarError as e:
             # filter='data' raises FilterError subclasses for
             # path traversal, symlinks, etc. Wrap as our error type.
@@ -382,7 +508,6 @@ def _safe_tar_extract(archive_path: Path, extract_dir: Path, resolved_root: Path
 
         # Manual safe extraction for a Python without the filter
         members = tf.getmembers()
-        total_size = 0
         for member in members:
             _validate_archive_member(member.name, resolved_root, extract_dir)
 
@@ -390,11 +515,6 @@ def _safe_tar_extract(archive_path: Path, extract_dir: Path, resolved_root: Path
                 raise _UnsafeArchiveError(f"Archive contains symlink/hardlink: {member.name}")
             if member.isdev():
                 raise _UnsafeArchiveError(f"Archive contains device file: {member.name}")
-            if member.size > _MAX_EXTRACT_SIZE:
-                raise _UnsafeArchiveError(f"File too large ({member.size} bytes): {member.name}")
-            total_size += member.size
-            if total_size > _MAX_TOTAL_SIZE:
-                raise _UnsafeArchiveError(f"Total extraction size exceeds {_MAX_TOTAL_SIZE} bytes")
 
         # Safe to extract — reuse validated member list
         safe_members = [m for m in members if m.isfile() or m.isdir()]
@@ -547,11 +667,13 @@ def vet_package(
             for name, _reason in not_scanned:
                 print(f"  not scanned: {name}")
             # Content decides what is binary, and the package wrote the
-            # content. Naming the files lets a reader see what that left out.
+            # content. Naming the files lets a reader see what that left out,
+            # of a file that was scanned for the text inside it as well.
             for name in binary[:_MAX_BINARY_LISTED]:
-                print(f"  binary, not scanned: {name}")
+                print(f"  binary, not scanned as text: {name}")
             if len(binary) > _MAX_BINARY_LISTED:
-                print(f"  binary, not scanned: {len(binary) - _MAX_BINARY_LISTED} more file(s)")
+                more = len(binary) - _MAX_BINARY_LISTED
+                print(f"  binary, not scanned as text: {more} more file(s)")
 
     # "Nothing found" would be the wrong thing to say when part of the
     # package was never looked at; the header and warnings tell that story.

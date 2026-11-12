@@ -468,7 +468,8 @@ class TestAllText:
         targets, problem = resolve_package("heckler-sample", "1.0", "pip", lock)
         assert (targets, problem) == ([sp / "sample_impl" / "__init__.py"], "")
 
-    def test_every_text_file_with_all_text(self, tmp_path: Path) -> None:
+    def test_every_file_with_all_text(self, tmp_path: Path) -> None:
+        """Which of them is binary is for the scanner to say, as in a directory walk."""
         sp = make_venv(tmp_path)
         install(sp, "heckler_sample", "1.0", self.FILES)
         lock = str(tmp_path / "requirements.txt")
@@ -480,8 +481,33 @@ class TestAllText:
             "heckler_sample-1.0.dist-info/RECORD",
             "sample_impl/LICENSE",
             "sample_impl/__init__.py",
+            "sample_impl/_native.so",
             "sample_impl/templates/page.tmpl",
         ]
+
+    @needs_git
+    def test_all_text_reads_a_padded_text_file_and_names_what_looks_binary(
+        self, repo: Path
+    ) -> None:
+        """Padding at its top used to drop a file from what is scanned, without a word."""
+        sp = make_venv(repo)
+        files = {
+            "sample_impl/__init__.py": CLEAN,
+            "sample_impl/notes.dat": "# " + chr(0) * 300 + "\n" + CLEAN * 150 + PLANTED,
+            "sample_impl/_native.so": "ELF" + chr(0) * 400 + CLEAN,
+        }
+        install(sp, "heckler_sample", "1.1", files)
+        (repo / "requirements.txt").write_text("heckler-sample==1.1\n", encoding="utf-8")
+        _git(repo, "add", "requirements.txt")
+
+        assert scan_changed_deps(["requirements.txt"], Scanner(scan_deps=True)) == []
+        scanner = Scanner(scan_deps=True, all_text=True)
+        findings = scan_changed_deps(["requirements.txt"], scanner)
+        assert [(Path(f.file).name, f.char_name) for f in findings] == [
+            ("notes.dat", f"Variation Selector {number} (in a file that looks binary)")
+            for number in (2, 3, 4)
+        ]
+        assert sorted(Path(path).name for path in scanner.binary) == ["_native.so", "notes.dat"]
 
     def test_pth_file_is_scanned_by_default(self, tmp_path: Path) -> None:
         sp = make_venv(tmp_path)

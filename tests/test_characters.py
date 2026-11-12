@@ -3,11 +3,25 @@
 from __future__ import annotations
 
 from heckler.characters import (
+    DANGEROUS_NON_CONTROL_RE,
     DANGEROUS_UNICODE_RE,
     Severity,
     ThreatCategory,
     get_char_info,
 )
+
+
+class TestNonControlRegex:
+    def test_it_is_the_whole_set_from_no_break_space_up(self) -> None:
+        """Nothing is in one pattern and missing from the other, in either direction."""
+        everything = "".join(map(chr, range(0x110000)))
+        flagged = set(DANGEROUS_UNICODE_RE.findall(everything))
+        assert set(DANGEROUS_NON_CONTROL_RE.findall(everything)) == {
+            char for char in flagged if ord(char) >= 0xA0
+        }
+        assert {ord(char) for char in flagged if ord(char) < 0xA0} == (
+            set(range(0x20)) - {0x09, 0x0A, 0x0D} | set(range(0x7F, 0xA0))
+        )
 
 
 class TestDangerousUnicodeRegex:

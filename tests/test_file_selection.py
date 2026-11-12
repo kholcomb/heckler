@@ -177,7 +177,8 @@ class TestEveryTextFile:
         config = tmp_path / ".heckler.yml"
         config.write_text("extra_extensions:\n  - .custom\n", encoding="utf-8")
         assert main(["--ci", str(tmp_path)]) == 0
-        assert "1 file(s) look binary and were not scanned" in capsys.readouterr().err
+        note = f"Note: not scanned as text, binary by content: {tmp_path / 'a.custom'}."
+        assert note in capsys.readouterr().err
         assert main(["--ci", "--config", str(config), str(tmp_path)]) == 1
 
     def test_all_text_does_not_drop_the_extra_extensions(self, tmp_path: Path) -> None:
@@ -213,13 +214,25 @@ class TestFilesPassedByName:
         assert scanner.scan_path(source) != [], "the name marks it as source"
         assert scanner.binary == [str(blob)]
 
-    def test_cli_counts_what_it_left_out(
+    def test_skip_binary_reads_a_file_that_is_mostly_text(self, tmp_path: Path) -> None:
+        """Padding at the top makes a file look binary. It does not make it binary."""
+        padded = tmp_path / "notes"
+        text = "a line of plain text\n" * 80 + f"name = 'a{ZWSP}b'\n"
+        padded.write_bytes(b"# " + b"\x00" * 300 + b"\n" + text.encode())
+        names = [f.char_name for f in Scanner().scan_path(padded)]
+        assert names == ["Null", "Zero Width Space"]
+        scanner = Scanner(skip_binary=True)
+        names = [f.char_name for f in scanner.scan_path(padded)]
+        assert names == ["Zero Width Space (in a file that looks binary)"]
+        assert scanner.binary == [str(padded)], "named, and scanned as well"
+
+    def test_cli_names_what_it_left_out(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         blob, _source, text = self._files(tmp_path)
         assert main(["--ci", "--no-color", "--skip-binary", str(blob), str(text)]) == 1
         captured = capsys.readouterr()
-        assert "1 file(s) look binary and were not scanned" in captured.err
+        assert f"Note: not scanned as text, binary by content: {blob}." in captured.err
         assert str(text) in captured.out
         assert str(blob) not in captured.out
 
