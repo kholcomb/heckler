@@ -91,7 +91,9 @@ jobs:
           # would report what is in them.
           VIRTUALENV_NO_PIP: '1'
           VIRTUALENV_NO_SETUPTOOLS: '1'
-        run: |
+        # pnpm is the installer and not a dependency of the project, so no
+        # lockfile pins it, as with pip, uv, poetry and pipenv below.
+        run: |  # zizmor: ignore[adhoc-packages]
           dirs=()
 
           if [ -f pnpm-lock.yaml ]; then
