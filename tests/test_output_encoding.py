@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import io
 import json
 import os
@@ -84,13 +85,48 @@ class TestWriteOut:
         else:
             assert _written(raw) == text.encode("ascii", "backslashreplace") + b"\n"
 
+    @pytest.mark.parametrize("json_document", [False, True])
+    def test_the_handler_windows_gives_a_pipe(
+        self, monkeypatch: pytest.MonkeyPatch, json_document: bool
+    ) -> None:
+        raw = _stdout(monkeypatch, "cp1252", errors="surrogateescape")
+        value = {"file": f"{CYRILLIC}{ASTRAL}.py"}
+        text = json.dumps(value, indent=2, ensure_ascii=False)
+        write_out(text, json_document=json_document)
+        if json_document:
+            assert _written(raw) == json.dumps(value, indent=2).encode("ascii") + b"\n"
+        else:
+            assert _written(raw) == text.encode("ascii", "backslashreplace") + b"\n"
+
+    def test_surrogateescape_still_writes_the_byte(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        raw = _stdout(monkeypatch, "utf-8", errors="surrogateescape")
+        write_out(f"x{LONE_SURROGATE}.py")
+        assert _written(raw) == b"x" + bytes([0x80]) + b".py\n"
+
+    def test_an_encoding_python_does_not_know(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class Stream(io.StringIO):
+            encoding = "not-a-codec"
+            errors = "strict"
+
+        stream = Stream()
+        monkeypatch.setattr(sys, "stdout", stream)
+        write_out(f"a {CYRILLIC} b")
+        assert stream.getvalue() == f"a {CYRILLIC} b\n"
+
 
 def _run(
-    *args: str, encoding: str, annotations: bool = False
+    *args: str, encoding: str | None, annotations: bool = False
 ) -> subprocess.CompletedProcess[bytes]:
-    """Run the command line, from the package under test, with standard output in *encoding*."""
+    """Run the command line, from the package under test, with standard output in *encoding*.
+
+    With None, nothing is set and the process gets the stream the platform gives.
+    """
     env = {k: v for k, v in os.environ.items() if k != "GITHUB_ACTIONS"}
-    env["PYTHONIOENCODING"] = encoding
+    if encoding is None:
+        env.pop("PYTHONIOENCODING", None)
+        env.pop("PYTHONUTF8", None)
+    else:
+        env["PYTHONIOENCODING"] = encoding
     env["PYTHONPATH"] = str(Path(heckler.__file__).parent.parent)
     if annotations:
         env["GITHUB_ACTIONS"] = "true"
@@ -103,21 +139,24 @@ def _planted(directory: Path, name: str, line: str = "x = 1") -> None:
 
 
 class TestCommandLine:
-    def test_a_source_line_the_stream_cannot_encode(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("limited", ["cp1252", "cp1252:surrogateescape"])
+    def test_a_source_line_the_stream_cannot_encode(self, tmp_path: Path, limited: str) -> None:
         _planted(tmp_path, "sample.py", line=f'name = "{CYRILLIC}"')
-        result = _run(str(tmp_path), encoding="cp1252")
-        assert result.returncode == _run(str(tmp_path), encoding="utf-8").returncode == 0
+        result = _run(str(tmp_path), encoding=limited)
+        reference = _run(str(tmp_path), encoding="utf-8")
+        assert result.returncode == reference.returncode == 0
         assert b"Traceback" not in result.stderr
         assert b"U+202E" in result.stdout
         assert CYRILLIC.encode("ascii", "backslashreplace") in result.stdout
 
+    @pytest.mark.parametrize("limited", ["cp1252", "cp1252:surrogateescape"])
     @pytest.mark.parametrize("fmt", ["text", "json", "sarif"])
     @pytest.mark.parametrize("stem", [CYRILLIC, "e" + ASTRAL])
     def test_a_file_name_the_stream_cannot_encode(
-        self, tmp_path: Path, fmt: str, stem: str
+        self, tmp_path: Path, fmt: str, stem: str, limited: str
     ) -> None:
         _planted(tmp_path, f"{stem}.py")
-        result = _run("--format", fmt, str(tmp_path), encoding="cp1252")
+        result = _run("--format", fmt, str(tmp_path), encoding=limited)
         reference = _run("--format", fmt, str(tmp_path), encoding="utf-8")
         assert result.returncode == reference.returncode == 0
         assert b"Traceback" not in result.stderr
@@ -127,9 +166,36 @@ class TestCommandLine:
             ours = json.loads(result.stdout.decode("cp1252"))
             assert ours == json.loads(reference.stdout.decode("utf-8"))
 
-    def test_an_annotation_names_the_file_escaped(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("limited", ["cp1252", "cp1252:surrogateescape"])
+    def test_an_annotation_names_the_file_escaped(self, tmp_path: Path, limited: str) -> None:
         _planted(tmp_path, f"{CYRILLIC}.py")
-        result = _run(str(tmp_path), encoding="cp1252", annotations=True)
+        result = _run(str(tmp_path), encoding=limited, annotations=True)
         assert result.returncode == 0
         lines = [ln for ln in result.stdout.splitlines() if ln.startswith(b"::error file=")]
         assert lines and CYRILLIC.encode("ascii", "backslashreplace") in lines[0]
+
+    @pytest.mark.parametrize("fmt", ["text", "json", "sarif"])
+    def test_the_stream_the_platform_gives(self, tmp_path: Path, fmt: str) -> None:
+        _planted(tmp_path, f"e{ASTRAL}.py", line=f'name = "{CYRILLIC}"')
+        result = _run("--format", fmt, str(tmp_path), encoding=None)
+        reference = _run("--format", fmt, str(tmp_path), encoding="utf-8")
+        assert result.returncode == reference.returncode == 0
+        assert b"Traceback" not in result.stderr
+        if fmt != "text":
+            assert json.loads(result.stdout.decode("utf-8")) == json.loads(reference.stdout)
+
+
+def test_only_write_out_prints_to_standard_output() -> None:
+    package = Path(heckler.__file__).parent
+    files = [path for path in sorted(package.rglob("*.py")) if path.name != "_output.py"]
+    assert files
+    offenders = [
+        f"{path.relative_to(package)}:{node.lineno}"
+        for path in files
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "print"
+        and not any(keyword.arg == "file" for keyword in node.keywords)
+    ]
+    assert offenders == []

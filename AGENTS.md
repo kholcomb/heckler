@@ -46,6 +46,7 @@ Everything is in `src/heckler/`.
 - `cli.py` has three modes that share one ending, `_finish()`, which prints the report and picks the exit code: the plain scan, `--vet` (`vet.py`), and `--scan-deps --diff-only` (`lockfile.py`). Exit codes: 0 clean, 1 findings (with `--ci`), 2 something could not be scanned or the tool failed.
 - `lockfile.py` reads `git diff` of a lockfile, works out which packages were added or bumped (one parser per ecosystem), finds the installed copy of each in `node_modules` or a site-packages directory, and scans it.
 - `vet.py` downloads a package from the public npm or PyPI registry with the standard library alone, checks its checksum, unpacks it with path-traversal and size checks, and scans every text file in every archive. It never runs package code.
+- `_output.py` is the only writer to standard output. `write_out()` escapes what the stream cannot encode, probing with the stream's own error handler, so that a report is never lost to a `UnicodeEncodeError`; a test fails on a `print()` to standard output anywhere else in the package.
 - `config.py` merges `.heckler.yml` and `[tool.heckler]` into a `Config`, and raises `ConfigError` for what it cannot read or use; `formatters/` renders text, JSON and SARIF.
 
 ## Rules the code is built around

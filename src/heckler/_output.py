@@ -9,18 +9,22 @@ import sys
 def write_out(text: str, *, json_document: bool = False) -> None:
     """Print ``text`` and a newline to ``sys.stdout``.
 
-    Where the stream can encode ``text``, it is printed as it is. Where it
-    cannot, the characters it cannot take are escaped: as JSON string escapes
-    when ``text`` is a JSON document written with ``ensure_ascii=False``, as
-    backslash escapes otherwise.
+    The stream is probed with its own error handler, so ``text`` is changed
+    exactly when ``print()`` would raise. Where the stream can encode it, with
+    its handler, it is printed as it is. Where it cannot, the characters it
+    cannot take are escaped: every character outside ASCII as a JSON string
+    escape when ``text`` is a JSON document written with ``ensure_ascii=False``,
+    the ones the stream cannot take as backslash escapes otherwise. A stream
+    that reports no encoding or no handler, or one Python has no codec or
+    handler for, is written to as it is.
     """
     encoding: str | None = getattr(sys.stdout, "encoding", None)
     errors: str | None = getattr(sys.stdout, "errors", None)
-    if encoding is None or errors != "strict":
+    if encoding is None or errors is None:
         print(text)
         return
     try:
-        text.encode(encoding)
+        text.encode(encoding, errors)
     except LookupError:
         print(text)
         return
