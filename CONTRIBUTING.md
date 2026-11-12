@@ -58,10 +58,13 @@ pre-commit run --all-files
 The CI pipeline runs the following on Python 3.11 through 3.14 on Linux, and
 on Python 3.12 on Windows and macOS. Please ensure they all pass locally
 before opening a pull request. CI also runs the commit hooks and the action
-in `action.yml`, uploads the action's scan of the tree to code scanning,
-builds the package and installs the wheel, and lints the workflows with
-actionlint; there is nothing to run locally for those. A pull request from
-a fork cannot upload, so its merge waits on a maintainer.
+in `action.yml`, uploads the action's scan of the tree to code scanning, and
+builds the package. It installs the wheel with no index, checks that its
+metadata requires nothing outside an extra, and imports every module from it.
+It lints the workflows, `action.yml` and the example workflow with actionlint
+and zizmor. There is nothing to run locally for the hooks, the action, the
+upload, the wheel or actionlint. A pull request from a fork cannot upload, so
+its merge waits on a maintainer.
 
 **Linting (Ruff):**
 
@@ -88,11 +91,12 @@ mypy src/
 pyright
 ```
 
-**Workflows**, after a change to a workflow or to `action.yml`. The commit
-hook runs the same check on those files when one is staged:
+**Workflows**, after a change to a workflow, to `action.yml` or to the example
+workflow. The commit hook runs the same check on a staged workflow or
+`action.yml`, but not on the example:
 
 ```bash
-zizmor --offline .
+zizmor --offline . examples/dependency-scan.yml
 ```
 
 **Self-scan:**

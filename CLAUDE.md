@@ -8,7 +8,7 @@ This file holds what every task needs. The detail is in `AGENTS.md` and the proj
 
 ## Every task
 
-Check a change with all six; CI runs the same:
+Check a change with all six. CI runs these and more:
 
 ```bash
 pytest
@@ -33,6 +33,7 @@ One test: `pytest tests/test_scanner.py::TestScanPath::test_skip_dirs`
 |---|---|
 | Code in `src/heckler/` | `AGENTS.md`: Architecture, and Rules the code is built around |
 | File lists, CLI options, the README, the pre-commit hooks, the example workflow | `AGENTS.md`: Things that have to stay in step |
+| A workflow, `action.yml` or the example workflow | `AGENTS.md`: Commands, for the lint to run and for what CI adds to the six |
 | Tests or fixtures | `AGENTS.md`: Tests and fixtures |
 | A commit, a version number or a release | `AGENTS.md`: Commits and releases, then `CONTRIBUTING.md`: Versioning and Releases |
 | What an option, exit code or configuration key does for users | `README.md` |

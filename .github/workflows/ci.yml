@@ -147,8 +147,8 @@ jobs:
       # action.yml from this commit, with no inputs: what a workflow gets
       # when it only names the action. It is ./ and not $/, here and below:
       # GitHub documents $/ for a directory in the repository and says
-      # nothing of an action.yml at the root, and actionlint 1.7.12 takes
-      # $/ for an error.
+      # nothing of an action.yml at the root, and actionlint takes $/ for
+      # an error.
       - name: Action passes the tree
         uses: ./  # zizmor: ignore[self-repository]
 
@@ -262,7 +262,8 @@ jobs:
           python-version: '3.12'
       - run: pip install -e ".[dev]"
 
-      # Syntax, expressions and the shell in each run step.
+      # Syntax, expressions and the shell in each run step. Given no file,
+      # actionlint finds the workflows of the repository itself.
       - name: actionlint
         uses: docker://rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
         with:
