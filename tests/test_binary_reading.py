@@ -6,7 +6,8 @@ before it is left out. When no more than a quarter of it is control bytes
 and invalid UTF-8, it is mostly text: every stretch of 32 characters or more
 that decodes as UTF-8 is scanned, without control characters and without
 suppression directives. A file that is more than a quarter junk is binary,
-and is left out and named as before.
+and is left out. Either way the file is named in the report, as every file
+that looks binary was before: that reading leaves things out.
 
 Everything is built with chr(), so this file holds none of the characters,
 and the samples are inert: text in a comment or a string, read by nothing.
@@ -81,18 +82,18 @@ class TestPaddingDoesNotOptAFileOut:
         assert [(f.line, f.column, f.char_name) for f in findings] == [
             (82, 12, "Right-to-Left Override" + LOOKS_BINARY)
         ]
-        assert scanner.binary == []
+        assert scanner.binary == [str(tmp_path / name)]
         assert scanner.skipped == []
 
     def test_cli_fails_the_run(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        _looks_binary(tmp_path / "functions", _padded(b"\x01"))
+        padded = _looks_binary(tmp_path / "functions", _padded(b"\x01"))
         assert main(["--ci", "--no-color", str(tmp_path)]) == 1
         captured = capsys.readouterr()
         assert "82:12  CRITICAL  U+202E (Right-to-Left Override" + LOOKS_BINARY + ")" in (
             captured.out
         )
         assert 'greeting="a<U+202E>b"' in captured.out
-        assert "not scanned" not in captured.err
+        assert f"Note: not scanned as text, binary by content: {padded}." in captured.err
 
     def test_control_characters_are_not_reported(self, tmp_path: Path) -> None:
         """Padding is made of them, and so is what real binaries hold in between text."""
@@ -135,10 +136,10 @@ class TestMoreThanAQuarterIsNotText:
     def test_a_quarter_is_still_mostly_text(self, tmp_path: Path) -> None:
         sample = self._sample(250)
         assert len(sample) == 1000
-        _looks_binary(tmp_path / "blob", sample)
+        blob = _looks_binary(tmp_path / "blob", sample)
         scanner = Scanner()
         assert [f.codepoint for f in scanner.scan_path(tmp_path)] == [0x202E]
-        assert scanner.binary == []
+        assert scanner.binary == [str(blob)], "named, and scanned as well"
 
     def test_one_byte_more_is_binary(self, tmp_path: Path) -> None:
         sample = self._sample(251)
@@ -167,7 +168,7 @@ class TestMoreThanAQuarterIsNotText:
         assert scanner.binary == [str(blob)]
 
         assert main(["--ci", str(tmp_path)]) == 0
-        assert f"Note: not scanned, binary by content: {blob}." in capsys.readouterr().err
+        assert f"Note: not scanned as text, binary by content: {blob}." in capsys.readouterr().err
 
 
 class TestRealBinaries:
@@ -205,6 +206,53 @@ class TestRealBinaries:
         self._left_out(tmp_path, blob)
 
 
+class TestEveryFileThatLooksBinaryIsNamed:
+    """A file that looks binary is named in the report, mostly text or not.
+
+    Reading a file that is mostly text leaves things out: every control
+    character, and any stretch of fewer than 32 characters between bytes
+    that are not UTF-8. Either can hold what a scan is for, at a cost far
+    below the quarter. So the file is named whether or not anything was
+    reported from it, as it was before such a file was read at all, and a
+    file made to look binary never leaves a run without a trace.
+    """
+
+    def _cut_short(self) -> bytes:
+        """Comment lines of 31 characters, with a byte that is not UTF-8 before each."""
+        line = ("# " + "x" * 27 + ZWSP + "\n").encode()
+        return HEAD + FILLER + (b"\xff" + line) * 40
+
+    def test_characters_cut_into_short_stretches(self, tmp_path: Path) -> None:
+        """40 invalid bytes, under 2% of the file, keep 40 characters out of every run."""
+        blob = _looks_binary(tmp_path / "notes", self._cut_short())
+        scanner = Scanner()
+        assert scanner.scan_path(tmp_path) == []
+        assert scanner.binary == [str(blob)]
+        assert scanner.skipped == []
+
+    def test_control_characters_that_are_not_reported(self, tmp_path: Path) -> None:
+        """Escape sequences, backspace, DEL and a C1 control, in a comment."""
+        controls = chr(0x1B) + "[2K" + chr(0x08) + chr(0x7F) + chr(0x85)
+        body = HEAD + FILLER + f"# {controls}\n".encode() * 10
+        blob = _looks_binary(tmp_path / "notes", body)
+        scanner = Scanner()
+        assert scanner.scan_path(tmp_path) == []
+        assert scanner.binary == [str(blob)]
+
+    def test_named_with_nothing_left_out_of_the_reading(self, tmp_path: Path) -> None:
+        blob = _looks_binary(tmp_path / "notes", HEAD + FILLER)
+        scanner = Scanner()
+        assert scanner.scan_path(tmp_path) == []
+        assert scanner.binary == [str(blob)]
+
+    def test_cli_names_a_file_it_reported_nothing_from(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        blob = _looks_binary(tmp_path / "notes", self._cut_short())
+        assert main(["--ci", str(tmp_path)]) == 0
+        assert f"Note: not scanned as text, binary by content: {blob}." in capsys.readouterr().err
+
+
 class TestTextRuns:
     """What counts as text inside a file that is read this way."""
 
@@ -222,17 +270,15 @@ class TestTextRuns:
     def test_31_characters_between_invalid_bytes_are_not(self, tmp_path: Path) -> None:
         """Short of 32 characters, what sits between two invalid bytes is not text.
 
-        Two things make that safe to leave unreported. Bytes that are not
-        UTF-8 show as replacement glyphs wherever the file is displayed, so
-        cutting text into short pieces with them cannot be done unseen, and
-        they count towards the quarter that makes a file binary. And without
-        a length, bytes that only happen to be valid UTF-8 would be reported
-        for the code points they spell.
+        Without a length, bytes that only happen to be valid UTF-8 would be
+        reported for the code points they spell. The character is not
+        reported, then, and what stands in for that is the name of the file
+        in the report.
         """
-        _looks_binary(tmp_path / "blob", self._between_invalid_bytes("x" * 30 + ZWSP))
+        blob = _looks_binary(tmp_path / "blob", self._between_invalid_bytes("x" * 30 + ZWSP))
         scanner = Scanner()
         assert scanner.scan_path(tmp_path) == []
-        assert scanner.binary == [], "read, with nothing in it to report"
+        assert scanner.binary == [str(blob)]
 
     def test_a_file_that_is_text_from_end_to_end_is_scanned_whatever_its_length(
         self, tmp_path: Path
@@ -344,10 +390,11 @@ class TestTooLargeToRead:
 
     def test_at_the_limit_it_is_read(self, tmp_path: Path, small_limit: None) -> None:
         body = b"\x00\x01" * 300 + f"\nname = 'a{ZWSP}b'\n".encode()
-        _looks_binary(tmp_path / "video", body + b"/" * (64 * 1024 - len(body)))
+        blob = _looks_binary(tmp_path / "video", body + b"/" * (64 * 1024 - len(body)))
         scanner = Scanner()
         assert len(scanner.scan_path(tmp_path)) == 1
-        assert scanner.binary == []
+        assert scanner.binary == [str(blob)]
+        assert scanner.skipped == []
 
     def test_cli_names_it_and_does_not_fail(
         self, tmp_path: Path, small_limit: None, capsys: pytest.CaptureFixture[str]
@@ -356,7 +403,7 @@ class TestTooLargeToRead:
         (tmp_path / "ok.txt").write_text("fine\n", encoding="utf-8")
         assert main(["--ci", str(tmp_path)]) == 0
         captured = capsys.readouterr()
-        assert f"Note: not scanned, binary by content: {blob}." in captured.err
+        assert f"Note: not scanned as text, binary by content: {blob}." in captured.err
         assert "No dangerous" in captured.out
 
     def test_passed_by_name_with_skip_binary(self, tmp_path: Path, small_limit: None) -> None:

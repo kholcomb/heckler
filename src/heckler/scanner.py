@@ -342,9 +342,13 @@ _MIN_CONTROL_BYTES = 2
 # and is scanned for the text inside it.
 #
 # This is where the reading stops. A file that is more than a quarter junk
-# is binary, whatever text it also holds: it is left out and named in the
-# report. Hiding text that way takes junk on the scale of the file, and what
-# an image, an archive or an executable holds is not looked at.
+# is binary, whatever text it also holds: it is left out. Hiding text that
+# way takes junk on the scale of the file, and what an image, an archive or
+# an executable holds is not looked at.
+#
+# Either way the file is named in the report, in Scanner.binary. The reading
+# of a file that is mostly text is not a whole one (see _MIN_TEXT_RUN), so
+# it adds findings to the name and does not take the place of it.
 _MOSTLY_TEXT_RATIO = 4
 
 # In a file that looks binary and is mostly text, what is scanned is each
@@ -354,14 +358,20 @@ _MOSTLY_TEXT_RATIO = 4
 # What ends a run is a byte that is not UTF-8, and nothing else. A control
 # byte does not, NUL included: one on each side of a flagged character would
 # cut it out of the text, and they show in a diff as little as the character
-# does. A byte that is not UTF-8 shows as a replacement glyph wherever the
-# file is displayed, so hiding a character behind one costs the attack the
-# invisibility it is after, and each one counts towards the quarter above.
+# does.
 #
 # The length keeps chance out. Bytes that are not text spell a flagged code
 # point now and then: about 70 times per MB in random bytes, nearly always
 # with an invalid byte a few characters away. Measured over 1 GB of them, a
 # run of 16 would still report two in 50 MB, and a run of 32 none at all.
+#
+# It is also a way out of the reading, and a cheap one: an invalid byte
+# every 31 characters keeps all of a file out of every run, at a few bytes
+# in a hundred. Control characters are not reported from a run either, since
+# padding and the binary parts of a file are made of them. Neither is closed
+# by reporting more, which would report chance. A file read this way is
+# named in the report whatever the reading found, so what it left out is
+# never left out without a word.
 _MIN_TEXT_RUN = 32
 _TEXT_RUN_RE = re.compile(f"[^{_REPLACEMENT}]{{{_MIN_TEXT_RUN},}}")
 
@@ -618,9 +628,12 @@ class Scanner:
     #: Directories that were not entered because of their name, other than
     #: version control data and tool caches.
     skipped_dirs: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
-    #: Files left out as binary: more than a quarter of the file is control
-    #: bytes or invalid UTF-8, or its start looks binary and it is too large
-    #: to read. A file whose name marks it as source is never one of them.
+    #: Files that were not scanned as text, because their start looks
+    #: binary. One of them is left out when more than a quarter of it is
+    #: control bytes or invalid UTF-8, or when it is too large to read. The
+    #: rest are mostly text and were scanned for the text inside them, which
+    #: is not all a scan of text reports, so they are listed as well. A file
+    #: whose name marks it as source is never one of them.
     binary: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -838,14 +851,18 @@ class Scanner:
         padding in the first comment of a script is enough. So the whole
         file is read. If more than a quarter of it is control bytes and
         invalid UTF-8 (see ``_MOSTLY_TEXT_RATIO``), it is binary, and is left
-        out and recorded in ``binary``. Text inside a file like that is not
-        scanned.
+        out. Text inside a file like that is not scanned.
 
         Otherwise the file is mostly text, and every run of text in it is
         scanned (see ``_MIN_TEXT_RUN``): without control characters, which
         the padding is made of, and without suppression directives, since
         git shows no diff for a file it takes for binary and nobody reviews
         a directive in one.
+
+        The file is recorded in ``binary`` in both cases. Control characters
+        and what lies outside the runs can hold what a scan is for, and this
+        reading reports neither, so a file it found nothing in has still not
+        been scanned as text is.
 
         A file too large to read is left out as binary too. It is recorded
         in ``binary`` and not in ``skipped``, so the large media files of a
@@ -854,8 +871,8 @@ class Scanner:
         raw = self._read(filepath, looks_binary=True)
         if raw is None:
             return []
+        self.binary.append(str(filepath))
         if not _is_utf8_text(raw, _MOSTLY_TEXT_RATIO):
-            self.binary.append(str(filepath))
             return []
         # Everything that is reported from this reading is U+00A0 or above,
         # and none of that is in ASCII.

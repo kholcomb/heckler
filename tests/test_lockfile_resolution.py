@@ -486,7 +486,9 @@ class TestAllText:
         ]
 
     @needs_git
-    def test_all_text_reads_a_padded_text_file_and_names_a_binary_one(self, repo: Path) -> None:
+    def test_all_text_reads_a_padded_text_file_and_names_what_looks_binary(
+        self, repo: Path
+    ) -> None:
         """Padding at its top used to drop a file from what is scanned, without a word."""
         sp = make_venv(repo)
         files = {
@@ -505,7 +507,7 @@ class TestAllText:
             ("notes.dat", f"Variation Selector {number} (in a file that looks binary)")
             for number in (2, 3, 4)
         ]
-        assert [Path(path).name for path in scanner.binary] == ["_native.so"]
+        assert sorted(Path(path).name for path in scanner.binary) == ["_native.so", "notes.dat"]
 
     def test_pth_file_is_scanned_by_default(self, tmp_path: Path) -> None:
         sp = make_venv(tmp_path)

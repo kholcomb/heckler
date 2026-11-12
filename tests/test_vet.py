@@ -647,7 +647,10 @@ class TestVetPackage:
         files = {"package/logo.png": blob, "package/index.js": b"1;\n"}
         serve([_tar_gz(tmp_path / "pkg-1.0.0.tgz", files)])
         assert self._vet("pkg@1.0.0") == 0
-        assert "  binary, not scanned: pkg-1.0.0.tgz/package/logo.png" in capsys.readouterr().out
+        assert (
+            "  binary, not scanned as text: pkg-1.0.0.tgz/package/logo.png"
+            in capsys.readouterr().out
+        )
 
     def test_padding_does_not_take_a_text_file_out_of_the_scan(
         self, tmp_path: Path, serve: Serve, capsys: pytest.CaptureFixture[str]
@@ -660,7 +663,7 @@ class TestVetPackage:
         out = capsys.readouterr().out
         assert "3 finding(s) (3 CRITICAL). DO NOT INSTALL." in out
         assert "Variation Selector 2 (in a file that looks binary)" in out
-        assert "binary, not scanned" not in out
+        assert "  binary, not scanned as text: pkg-1.0.0.tgz/package/lib/loader" in out
 
     def test_archive_with_a_member_over_the_size_limit_is_not_unpacked(
         self,

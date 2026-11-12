@@ -254,9 +254,11 @@ def _report_suppressions(scanner: Scanner) -> None:
         print(f"Note: not scanned, skipped by directory name: {named}.{advice}", file=sys.stderr)
     if scanner.binary:
         # By name, so that a file made to be one of these can be told from
-        # the images and archives that are expected.
+        # the images and archives that are expected. "As text", because one
+        # that is mostly text was scanned for the text inside it, and may
+        # have findings in the report above.
         named = _name_some(scanner.binary)
-        print(f"Note: not scanned, binary by content: {named}.", file=sys.stderr)
+        print(f"Note: not scanned as text, binary by content: {named}.", file=sys.stderr)
     if scanner.suppressed:
         print(
             f"Note: {sum(scanner.suppressed.values())} finding(s) suppressed in"

@@ -252,13 +252,14 @@ class TestNulInAFileWithANameThatSaysNothing:
         """A header and 60 NUL bytes in front of 500 bytes of text.
 
         The start looks binary, and that used to leave the text out. Over
-        the whole file the NUL bytes are a tenth, so it is mostly text.
+        the whole file the NUL bytes are a tenth, so it is mostly text. It
+        is still named with the files that look binary.
         """
         content = b"\x7fELF" + b"\x00" * 60 + b"text " * 100
         (tmp_path / "blob").write_bytes(content + chr(0xA0).encode() * 10)
         names, binary = self._scan(tmp_path)
         assert names == ["No-Break Space (in a file that looks binary)"] * 10
-        assert binary == []
+        assert binary == ["blob"]
 
     def test_recognised_name_is_not_recorded_as_binary(self, tmp_path: Path) -> None:
         (tmp_path / "blob.js").write_bytes(b"\x00" * 200)
@@ -272,7 +273,7 @@ class TestNulInAFileWithANameThatSaysNothing:
         (tmp_path / "blob").write_bytes(b"\x00" * 200)
         (tmp_path / "ok.txt").write_text("fine\n", encoding="utf-8")
         assert main(["--ci", str(tmp_path)]) == 0
-        note = f"Note: not scanned, binary by content: {tmp_path / 'blob'}."
+        note = f"Note: not scanned as text, binary by content: {tmp_path / 'blob'}."
         assert note in capsys.readouterr().err
 
     def test_cli_says_nothing_when_nothing_was_left_out(

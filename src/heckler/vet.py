@@ -565,11 +565,13 @@ def vet_package(
             for name, _reason in not_scanned:
                 print(f"  not scanned: {name}")
             # Content decides what is binary, and the package wrote the
-            # content. Naming the files lets a reader see what that left out.
+            # content. Naming the files lets a reader see what that left out,
+            # of a file that was scanned for the text inside it as well.
             for name in binary[:_MAX_BINARY_LISTED]:
-                print(f"  binary, not scanned: {name}")
+                print(f"  binary, not scanned as text: {name}")
             if len(binary) > _MAX_BINARY_LISTED:
-                print(f"  binary, not scanned: {len(binary) - _MAX_BINARY_LISTED} more file(s)")
+                more = len(binary) - _MAX_BINARY_LISTED
+                print(f"  binary, not scanned as text: {more} more file(s)")
 
     # "Nothing found" would be the wrong thing to say when part of the
     # package was never looked at; the header and warnings tell that story.

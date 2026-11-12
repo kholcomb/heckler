@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A file with an unrecognised name whose first 8 KB look binary is read in full before it is left out. When no more than a quarter of its bytes are control bytes or invalid UTF-8 it is mostly text, and is scanned for the text inside it: every run of 32 or more characters that are valid UTF-8, without control characters and without `heckler-ignore` comments, with its findings marked `(in a file that looks binary)`. A file with more than that is left out as binary, as before
 - A binary format that is mostly text, such as a compiled translation catalog, is read by that rule and can produce findings. Add such files to the `allowlist` where the characters are expected
-- The note on stderr names the files left out as binary, up to five of them, instead of counting them
+- The note on stderr names the files that look binary, up to five of them, instead of counting them, and calls them `not scanned as text`, as `--vet` does in its report. A file that is mostly text is named there as well as scanned, because control characters and stretches of fewer than 32 characters between bytes that are not UTF-8 are not reported from it
 - `--diff-only --all-text` no longer drops a file that a changed Python package installed, without a word, because it looks binary. The file is read by the same rule, and named in the note when it is left out
 
 ### Fixed

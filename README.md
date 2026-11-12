@@ -133,7 +133,7 @@ findings = scanner.scan_path(Path("project/"))
 scanner.skipped     # [(path, reason), ...] for files that could not be scanned
 scanner.suppressed  # {path: count} of findings hidden by heckler-ignore comments
 scanner.skipped_dirs  # directories that were not entered because of their name
-scanner.binary      # files left out because their content is not text
+scanner.binary      # files that look binary, and were not scanned as text
 ```
 
 ## Configuration
@@ -207,9 +207,9 @@ Suppression directives are **never honored in dependency code** (node\_modules, 
 
 heckler scans text, whatever it is written in. A directory walk reads every file whose content is text, and a file passed by name is always scanned.
 
-A file looks binary when more than one byte in 32 of its first 8 KB is a control byte. A NUL or two does not come to that, and a single byte never does, however short the file is. A file that looks binary is then read in full, because the start of a file is cheap to pad. It is left out as binary when more than a quarter of all its bytes are control bytes or invalid UTF-8, or when it is larger than 50 MB. A run names the files it left out as binary in a note on stderr, and so does `--vet` in its report.
+A file looks binary when more than one byte in 32 of its first 8 KB is a control byte. A NUL or two does not come to that, and a single byte never does, however short the file is. A file that looks binary is then read in full, because the start of a file is cheap to pad. It is left out as binary when more than a quarter of all its bytes are control bytes or invalid UTF-8, or when it is larger than 50 MB.
 
-A file with less than that is mostly text, whatever its start looks like, and is scanned for the text inside it: every run of 32 or more characters that are valid UTF-8, and the whole file when all of it is. Control characters are not reported from that reading, `heckler-ignore` comments are not honoured in it, and its findings are marked `(in a file that looks binary)`. This has a limit, and it is the quarter: text inside an image, an archive or an executable is not scanned, and padding takes a text file out of the scan only when it is more than a quarter of the file, which is then named. A binary format that is mostly text, a compiled translation catalog for one, is read like any other file that is, and can produce findings; add such files to the `allowlist` where the characters are expected.
+A file with less than that is mostly text, whatever its start looks like, and is scanned for the text inside it: every run of 32 or more characters that are valid UTF-8, and the whole file when all of it is. Control characters are not reported from that reading, `heckler-ignore` comments are not honoured in it, and its findings are marked `(in a file that looks binary)`. That reading has limits: text inside an image, an archive or an executable is not scanned, and neither are control characters or a stretch of fewer than 32 characters between bytes that are not UTF-8. So a run names every file that looks binary in a note on stderr, and so does `--vet` in its report, whether the file was left out or scanned for the text inside it. A binary format that is mostly text, a compiled translation catalog for one, is read like any other file that is, and can produce findings; add such files to the `allowlist` where the characters are expected.
 
 A file whose name marks it as source, or whose first line starts with `#!`, is scanned whatever its bytes are, so nothing written into such a file takes it out of the scan; `extra_extensions` adds extensions to those names. `--skip-binary` applies the same rule to files passed by name, which is how the pre-commit hook runs.
 
