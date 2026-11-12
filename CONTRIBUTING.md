@@ -54,8 +54,10 @@ pre-commit run --all-files
 
 ## Running Checks
 
-The CI pipeline runs the following on Python 3.11 through 3.13. Please ensure
-they all pass locally before opening a pull request.
+The CI pipeline runs the following on Python 3.11 through 3.14. Please ensure
+they all pass locally before opening a pull request. CI also runs the commit
+hooks and the action in `action.yml`; there is nothing to run locally for
+those.
 
 **Linting (Ruff):**
 

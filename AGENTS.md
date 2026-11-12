@@ -29,7 +29,7 @@ pyright                                 # strict, src/ only ([tool.pyright] in p
 python -m heckler --ci --severity low . # self-scan: the tree must hold none of the characters
 ```
 
-CI (`.github/workflows/ci.yml`) runs lint, format, tests and the self-scan on Python 3.11 to 3.13, and mypy and Pyright once. Run the self-scan as `python -m heckler` from the development environment, so that it is the working tree that runs.
+CI (`.github/workflows/ci.yml`) runs lint, format, tests and the self-scan on Python 3.11 to 3.14, and mypy and Pyright once. It also runs the hooks in `.pre-commit-config.yaml`, and then the shipped `heckler` hook and the action in `action.yml`: each on the tree, which has to pass, and on a file with a character planted at run time, which has to fail. Run the self-scan as `python -m heckler` from the development environment, so that it is the working tree that runs.
 
 ## Architecture
 
