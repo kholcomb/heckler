@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import sys
 import tarfile
 import unittest.mock
 import urllib.error
@@ -775,6 +776,19 @@ class TestVetPackage:
         assert "[VET] pkg==1.0 (pypi) — 2 file(s) scanned, 0 findings. CLEAN." in out
         assert "  scanned: pkg-1.0.tar.gz" in out
         assert "  scanned: pkg-1.0-py3-none-any.whl" in out
+
+    def test_a_file_name_the_stream_cannot_encode(
+        self, tmp_path: Path, serve: Serve, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        name = chr(0x444) + chr(0x430) + "-1.0.tar.gz"
+        serve([_tar_gz(tmp_path / name, {"pkg-1.0/pkg/__init__.py": b"x = 1\n"})])
+        raw = io.BytesIO()
+        monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw, encoding="cp1252", newline=""))
+        assert self._vet() == 0
+        sys.stdout.flush()
+        header = f"[VET] pkg==1.0 (pypi) {chr(0x2014)} 1 file(s) scanned, 0 findings. CLEAN."
+        assert header.encode("cp1252") in raw.getvalue()
+        assert b"  scanned: " + name.encode("ascii", "backslashreplace") in raw.getvalue()
 
     def test_sdist_is_scanned_when_the_wheel_is_clean(
         self, tmp_path: Path, serve: Serve, capsys: pytest.CaptureFixture[str]

@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A named pipe in a directory no longer hangs the scan. It is named in a warning, as a socket or a device is, and counts as not scanned (exit code 2 with `--ci`)
 - The package metadata gives the development status as stable. It still said beta
+- A report that holds a character the output stream cannot encode is printed with the character escaped, where the run ended in a traceback with no report. That is the case on Windows when output goes to a pipe or a file. Output the stream can encode is unchanged
 
 ### Security
 

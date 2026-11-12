@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
+import heckler
 from heckler._output import write_out
 
 CYRILLIC = chr(0x444) + chr(0x430)  # neither has a decomposition
@@ -79,3 +83,53 @@ class TestWriteOut:
             assert json.loads(_written(raw)) == value
         else:
             assert _written(raw) == text.encode("ascii", "backslashreplace") + b"\n"
+
+
+def _run(
+    *args: str, encoding: str, annotations: bool = False
+) -> subprocess.CompletedProcess[bytes]:
+    """Run the command line, from the package under test, with standard output in *encoding*."""
+    env = {k: v for k, v in os.environ.items() if k != "GITHUB_ACTIONS"}
+    env["PYTHONIOENCODING"] = encoding
+    env["PYTHONPATH"] = str(Path(heckler.__file__).parent.parent)
+    if annotations:
+        env["GITHUB_ACTIONS"] = "true"
+    command = [sys.executable, "-m", "heckler", "--no-color", *args]
+    return subprocess.run(command, capture_output=True, env=env, check=False)
+
+
+def _planted(directory: Path, name: str, line: str = "x = 1") -> None:
+    (directory / name).write_text(f"{line}  # {chr(0x202E)}\n", encoding="utf-8")
+
+
+class TestCommandLine:
+    def test_a_source_line_the_stream_cannot_encode(self, tmp_path: Path) -> None:
+        _planted(tmp_path, "sample.py", line=f'name = "{CYRILLIC}"')
+        result = _run(str(tmp_path), encoding="cp1252")
+        assert result.returncode == _run(str(tmp_path), encoding="utf-8").returncode == 0
+        assert b"Traceback" not in result.stderr
+        assert b"U+202E" in result.stdout
+        assert CYRILLIC.encode("ascii", "backslashreplace") in result.stdout
+
+    @pytest.mark.parametrize("fmt", ["text", "json", "sarif"])
+    @pytest.mark.parametrize("stem", [CYRILLIC, "e" + ASTRAL])
+    def test_a_file_name_the_stream_cannot_encode(
+        self, tmp_path: Path, fmt: str, stem: str
+    ) -> None:
+        _planted(tmp_path, f"{stem}.py")
+        result = _run("--format", fmt, str(tmp_path), encoding="cp1252")
+        reference = _run("--format", fmt, str(tmp_path), encoding="utf-8")
+        assert result.returncode == reference.returncode == 0
+        assert b"Traceback" not in result.stderr
+        if fmt == "text":
+            assert stem.encode("ascii", "backslashreplace") in result.stdout
+        else:
+            ours = json.loads(result.stdout.decode("cp1252"))
+            assert ours == json.loads(reference.stdout.decode("utf-8"))
+
+    def test_an_annotation_names_the_file_escaped(self, tmp_path: Path) -> None:
+        _planted(tmp_path, f"{CYRILLIC}.py")
+        result = _run(str(tmp_path), encoding="cp1252", annotations=True)
+        assert result.returncode == 0
+        lines = [ln for ln in result.stdout.splitlines() if ln.startswith(b"::error file=")]
+        assert lines and CYRILLIC.encode("ascii", "backslashreplace") in lines[0]
