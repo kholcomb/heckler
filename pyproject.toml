@@ -41,6 +41,7 @@ dev = [
     "ruff==0.17.4",
     "mypy==2.4.1",
     "pyright==1.1.414",
+    "zizmor==1.32.0",
     "pre-commit==4.7.0",
     "regex==2026.11.9",
     "packaging==26.3",

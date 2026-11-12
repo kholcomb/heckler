@@ -5,18 +5,32 @@ on:
     branches: [main]
   pull_request:
 
+# No job writes to the repository, so the token can only read it.
+permissions:
+  contents: read
+
 jobs:
   test:
-    name: Test (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       # One version failing should not hide the results for the others.
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ['3.11', '3.12', '3.13', '3.14']
+        # Windows and macOS on one version each: what differs there is
+        # paths, links and encodings, not the Python release.
+        include:
+          - os: windows-latest
+            python-version: '3.12'
+          - os: macos-latest
+            python-version: '3.12'
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
         with:
@@ -42,6 +56,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
         with:
           python-version: '3.12'
@@ -54,6 +70,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
         with:
           python-version: '3.12'
@@ -90,11 +108,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
 
       # action.yml from this commit, with no inputs: what a workflow gets
-      # when it only names the action.
+      # when it only names the action. It is ./ and not $/, here and below:
+      # GitHub documents $/ for a directory in the repository and says
+      # nothing of an action.yml at the root, and actionlint 1.7.12 takes
+      # $/ for an error.
       - name: Action passes the tree
-        uses: ./
+        uses: ./  # zizmor: ignore[self-repository]
 
       - name: Plant a character
         run: |
@@ -109,7 +132,7 @@ jobs:
       - name: Action fails on a planted character
         id: planted
         continue-on-error: true
-        uses: ./
+        uses: ./  # zizmor: ignore[self-repository]
         with:
           path: planted
           format: json
@@ -119,3 +142,55 @@ jobs:
         run: |
           echo "::error::The action passed a file that holds U+202E."
           exit 1
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
+        with:
+          python-version: '3.12'
+
+      # As release.yml builds it: the sdist, then the wheel from the sdist.
+      - name: Build
+        run: |
+          pip install build
+          python -m build
+
+      # With no index pip can fetch nothing, so a runtime dependency fails
+      # the install.
+      - name: Install the wheel alone
+        run: |
+          python -m venv "$RUNNER_TEMP/clean"
+          "$RUNNER_TEMP/clean/bin/pip" install --no-index dist/*.whl
+
+      - name: Run the installed package
+        run: |
+          "$RUNNER_TEMP/clean/bin/heckler" --version
+          "$RUNNER_TEMP/clean/bin/heckler" --ci --severity low src
+
+  workflows:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
+        with:
+          python-version: '3.12'
+      - run: pip install -e ".[dev]"
+
+      # Syntax, expressions and the shell in each run step.
+      - name: actionlint
+        uses: docker://rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+        with:
+          args: -color
+
+      # Token permissions, pinning and injection, in the workflows and in
+      # action.yml. Offline: it is given no token and asks GitHub nothing.
+      - name: zizmor
+        run: zizmor --offline .
