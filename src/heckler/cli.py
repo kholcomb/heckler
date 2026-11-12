@@ -297,7 +297,7 @@ def _run_diff_only(args: argparse.Namespace, config: Config) -> int:
 
     scanner = _build_scanner(args, config, scan_deps=True)
 
-    lockfile_paths = args.paths or []
+    lockfile_paths: list[str] = args.paths or []
     if not lockfile_paths:
         # No lockfile is no packages, and no packages would come out as clean.
         print(

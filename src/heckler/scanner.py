@@ -11,11 +11,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .characters import (
-    _KEYCAP_BASES,
-    _ZERO_WIDTH_JOINER,
     DANGEROUS_NON_CONTROL_RE,
     DANGEROUS_UNICODE_RE,
+    KEYCAP_BASES,
     PRESENTATION_SELECTORS,
+    ZERO_WIDTH_JOINER,
     CharInfo,
     Severity,
     ThreatCategory,
@@ -608,7 +608,7 @@ class Scanner:
     #: directory walk does. Without this such a file is always scanned.
     skip_binary: bool = False
     severity_threshold: Severity = Severity.LOW
-    exclude_patterns: list[str] = field(default_factory=list)
+    exclude_patterns: list[str] = field(default_factory=list[str])
     allow_bom: bool = True
     scan_deps: bool = False
     diff_only: bool = False
@@ -619,22 +619,26 @@ class Scanner:
     # What the scans so far left out or held back, for the caller to report.
     #: ``(path, reason)`` for each file or directory that could not be scanned.
     skipped: list[tuple[str, str]] = field(
-        default_factory=list, init=False, repr=False, compare=False
+        default_factory=list[tuple[str, str]], init=False, repr=False, compare=False
     )
     #: Number of findings a directive suppressed, by file.
-    suppressed: dict[str, int] = field(default_factory=dict, init=False, repr=False, compare=False)
+    suppressed: dict[str, int] = field(
+        default_factory=dict[str, int], init=False, repr=False, compare=False
+    )
     #: Findings reported from a line whose directive lists no codepoints.
     unlisted: int = field(default=0, init=False, repr=False, compare=False)
     #: Directories that were not entered because of their name, other than
     #: version control data and tool caches.
-    skipped_dirs: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
+    skipped_dirs: list[str] = field(
+        default_factory=list[str], init=False, repr=False, compare=False
+    )
     #: Files that were not scanned as text, because their start looks
     #: binary. One of them is left out when more than a quarter of it is
     #: control bytes or invalid UTF-8, or when it is too large to read. The
     #: rest are mostly text and were scanned for the text inside them, which
     #: is not all a scan of text reports, so they are listed as well. A file
     #: whose name marks it as source is never one of them.
-    binary: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
+    binary: list[str] = field(default_factory=list[str], init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.text_extensions is None:
@@ -734,10 +738,10 @@ class Scanner:
                             first_emoji_selector = match.start()
                         emoji_selectors += 1
                         base = line[match.start() - 1]
-                        if base not in _KEYCAP_BASES:  # or every digit would count as bare
+                        if base not in KEYCAP_BASES:  # or every digit would count as bare
                             styled[(base, cp)] = styled.get((base, cp), 0) + 1
                             first_styled = first_styled or (line_num, match.start(), line)
-                    elif cp == _ZERO_WIDTH_JOINER:
+                    elif cp == ZERO_WIDTH_JOINER:
                         joiners += 1
                         first_joiner = first_joiner or (line_num, match.start(), line)
                 report(match.start(), cp, info)
@@ -777,7 +781,7 @@ class Scanner:
             line_num, column, line = first_joiner
             report(
                 column,
-                _ZERO_WIDTH_JOINER,
+                ZERO_WIDTH_JOINER,
                 CharInfo(
                     f"{joiners} zero width joiners between emoji in this file",
                     ThreatCategory.ZERO_WIDTH,
@@ -947,7 +951,7 @@ class Scanner:
             # Filter directories in-place — skip symlinks and excluded dirs.
             # Sorted, here and below, so the report comes out in the same
             # order on every filesystem.
-            entered = []
+            entered: list[str] = []
             for d in sorted(dirnames):
                 path = os.path.join(dirpath, d)
                 if d in effective_skip:

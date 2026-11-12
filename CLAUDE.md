@@ -8,13 +8,14 @@ This file holds what every task needs. The detail is in `AGENTS.md` and the proj
 
 ## Every task
 
-Check a change with all five; CI runs the same:
+Check a change with all six; CI runs the same:
 
 ```bash
 pytest
 ruff check src/ tests/
 ruff format --check src/ tests/
 mypy src/
+pyright
 python -m heckler --ci --severity low .
 ```
 

@@ -21,6 +21,7 @@ import urllib.request
 import zipfile
 import zlib
 from pathlib import Path
+from typing import cast
 
 from .config import Config
 from .formatters import get_formatter
@@ -102,6 +103,11 @@ def _fetch_json(url: str) -> dict[str, object]:
         raise
 
 
+def _json_object(value: object) -> dict[str, object]:
+    """*value* when it is a JSON object, and an empty one when it is anything else."""
+    return cast("dict[str, object]", value) if isinstance(value, dict) else {}
+
+
 _MAX_DOWNLOAD_SIZE = 500 * 1024 * 1024  # 500 MB — matches total extraction limit
 
 
@@ -165,14 +171,14 @@ def _download_npm(name: str, version: str | None, tmpdir: str) -> Path:
         print(f'Error: Package "{label}" not found in npm registry.', file=sys.stderr)
         sys.exit(2)
 
-    dist = meta.get("dist")
-    tarball_url = dist.get("tarball") if isinstance(dist, dict) else None
+    dist = _json_object(meta.get("dist"))
+    tarball_url = dist.get("tarball")
     if not tarball_url or not isinstance(tarball_url, str):
         print(f'Error: No tarball URL found for "{name}".', file=sys.stderr)
         sys.exit(2)
 
     # Extract expected checksum from registry metadata
-    expected_shasum = dist.get("shasum") if isinstance(dist, dict) else None
+    expected_shasum = dist.get("shasum")
 
     filename: str = tarball_url.rsplit("/", 1)[-1]
     dest: Path = Path(tmpdir) / filename
@@ -236,9 +242,10 @@ def _download_pypi(
 
     # (not an sdist, filename, url, sha256): sorts the sdist first.
     files: list[tuple[bool, str, str, object]] = []
-    for entry in urls:
-        download_url = entry.get("url") if isinstance(entry, dict) else None
-        filename = entry.get("filename") if isinstance(entry, dict) else None
+    for item in cast("list[object]", urls):
+        entry = _json_object(item)
+        download_url = entry.get("url")
+        filename = entry.get("filename")
         if (
             not isinstance(download_url, str)
             or not isinstance(filename, str)
@@ -249,8 +256,7 @@ def _download_pypi(
         ):
             print(f'Error: Malformed download metadata for "{name}".', file=sys.stderr)
             sys.exit(2)
-        digests = entry.get("digests")
-        sha256 = digests.get("sha256") if isinstance(digests, dict) else None
+        sha256 = _json_object(entry.get("digests")).get("sha256")
         files.append((entry.get("packagetype") != "sdist", filename, download_url, sha256))
 
     download_dir = Path(tmpdir) / "downloads"
@@ -433,8 +439,7 @@ class _CheckedTarInfo(tarfile.TarInfo):
             tf.extended_headers = 0
             tf.extended_header_size = 0
         # The stubs for tarfile leave the method out, as they do all that is private.
-        member: tarfile.TarInfo = super()._proc_member(tf)  # type: ignore[misc]
-        return member
+        return cast("tarfile.TarInfo", super()._proc_member(tf))  # type: ignore[misc]
 
     def _proc_gnusparse_10(
         self, member: tarfile.TarInfo, pax_headers: dict[str, str], tf: tarfile.TarFile

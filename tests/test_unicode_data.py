@@ -20,8 +20,8 @@ import regex
 
 from heckler.characters import (
     _EMOJI_BASE_RANGES,
-    _KEYCAP_BASES,
     DANGEROUS_UNICODE_RE,
+    KEYCAP_BASES,
     _is_emoji_base,
 )
 
@@ -129,7 +129,7 @@ class TestEmojiBases:
     def test_table_is_the_emoji_properties(self) -> None:
         """Emoji, and what Unicode keeps free for future emoji; the keycap bases are separate."""
         emoji = _having(r"[\p{Emoji}\p{Extended_Pictographic}]")
-        expected = _spans({cp for cp in emoji if chr(cp) not in _KEYCAP_BASES})
+        expected = _spans({cp for cp in emoji if chr(cp) not in KEYCAP_BASES})
         assert list(_EMOJI_BASE_RANGES) == expected, (
             "characters._EMOJI_BASE_RANGES should be:\n" + _as_table(expected)
         )

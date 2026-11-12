@@ -24,6 +24,18 @@
       "minimumReleaseAge": "3 days"
     },
     {
+      "description": "mypy runs from the dev extra in CI and from the commit hook. One pull request moves both, so the two never disagree about types.",
+      "matchPackageNames": ["mypy", "pre-commit/mirrors-mypy"],
+      "groupName": "mypy",
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "Pyright runs from the dev extra in CI and from the commit hook. One pull request moves both, so the two never disagree about types.",
+      "matchPackageNames": ["pyright", "RobertCraigie/pyright-python"],
+      "groupName": "pyright",
+      "minimumReleaseAge": "3 days"
+    },
+    {
       "description": "Say what a failing check means on a regex update.",
       "matchManagers": ["pep621"],
       "matchPackageNames": ["regex"],

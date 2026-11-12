@@ -20,7 +20,7 @@ import subprocess
 import sys
 import sysconfig
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 from .formatters.text import spell_out
 from .scanner import Scanner
@@ -229,8 +229,9 @@ def _parse_npm_packages(lines: list[tuple[bool, str]]) -> list[tuple[str, str]]:
         indent = _indent(text)
         m = _NPM_PACKAGE_KEY_RE.match(text)
         if m:
-            current, current_indent, field_indent = m.group(2), len(m.group(1)), -1
-            changes.set_name(current, current)
+            name: str = m.group(2)
+            current, current_indent, field_indent = name, len(m.group(1)), -1
+            changes.set_name(name, name)
         elif indent <= current_indent:
             # The closing brace, the root "" entry, a workspace entry, or
             # the end of "packages": no longer inside a package block.
@@ -663,7 +664,9 @@ def _node_installed_version(pkg_dir: Path) -> str | None:
         data = json.loads((pkg_dir / "package.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    version = data.get("version") if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        return None
+    version = cast("dict[str, object]", data).get("version")
     return version if isinstance(version, str) else None
 
 

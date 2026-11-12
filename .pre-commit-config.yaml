@@ -13,6 +13,27 @@ repos:
         # in the Markdown docs.
         types_or: [python, pyi]
 
+  # The type checks run when a file under src/ is staged, and read all of
+  # src/ whichever file it was: a change in one module can break another.
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.4.1
+    hooks:
+      - id: mypy
+        # In place of the mirror's own arguments, which loosen the check.
+        # This is the command CI runs, under [tool.mypy] in pyproject.toml.
+        args: [src/]
+        pass_filenames: false
+        files: ^src/
+
+  - repo: https://github.com/RobertCraigie/pyright-python
+    rev: v1.1.414
+    hooks:
+      - id: pyright
+        # No arguments, as in CI: what to check and how strictly is
+        # [tool.pyright] in pyproject.toml.
+        pass_filenames: false
+        files: ^src/
+
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.5.0
     hooks:

@@ -15,7 +15,7 @@ It is a zero-dependency package: standard library only, Python 3.11+. `config.py
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pre-commit install                      # lint/format on commit, Conventional Commits on the message
+pre-commit install                      # lint, format and type checks on commit, Conventional Commits on the message
 
 pytest                                  # whole suite, a few seconds
 pytest tests/test_scanner.py::TestScanPath::test_skip_dirs   # one test
@@ -25,10 +25,11 @@ pytest --cov=heckler --cov-report=term-missing               # what CI runs
 ruff check src/ tests/
 ruff format --check src/ tests/         # drop --check to rewrite
 mypy src/                               # strict
+pyright                                 # strict, src/ only ([tool.pyright] in pyproject.toml)
 python -m heckler --ci --severity low . # self-scan: the tree must hold none of the characters
 ```
 
-CI (`.github/workflows/ci.yml`) runs lint, format, tests and the self-scan on Python 3.11 to 3.13, and mypy once. Run the self-scan as `python -m heckler` from the development environment, so that it is the working tree that runs.
+CI (`.github/workflows/ci.yml`) runs lint, format, tests and the self-scan on Python 3.11 to 3.13, and mypy and Pyright once. Run the self-scan as `python -m heckler` from the development environment, so that it is the working tree that runs.
 
 ## Architecture
 
