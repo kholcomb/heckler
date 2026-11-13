@@ -19,6 +19,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 WORKFLOW = (REPO_ROOT / "examples" / "dependency-scan.yml").read_text(encoding="utf-8")
+CI = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
 
 def _trigger_paths(trigger: str) -> list[str]:
@@ -35,7 +36,7 @@ def _trigger_paths(trigger: str) -> list[str]:
 def _run_script(step: str) -> str:
     """The ``run:`` script of the step called *step*, without its indentation."""
     block = re.search(
-        rf"^      - name: {re.escape(step)}\n(?:        .*\n)*?        run: \|\n"
+        rf"^      - name: {re.escape(step)}\n(?:        .*\n)*?        run: \|(?:  #.*)?\n"
         r"((?:(?:          .*)?\n)+)",
         WORKFLOW,
         re.MULTILINE,
@@ -46,6 +47,23 @@ def _run_script(step: str) -> str:
 
 INSTALL = _run_script("Install dependencies without running their code")
 SCAN = _run_script("Scan dependencies")
+
+
+class TestLinted:
+    """CI hands every workflow under examples/ to both linters."""
+
+    def test_every_example_is_named_to_both_linters(self) -> None:
+        examples = sorted(
+            path.relative_to(REPO_ROOT).as_posix()
+            for suffix in ("*.yml", "*.yaml")
+            for path in (REPO_ROOT / "examples").rglob(suffix)
+        )
+        assert examples
+        actionlint = " ".join(re.findall(r"^ +args: (-color.*)$", CI, re.MULTILINE)).split()
+        zizmor = " ".join(re.findall(r"^ +run: (zizmor --offline.*)$", CI, re.MULTILINE)).split()
+        for name in examples:
+            assert name in actionlint, f"actionlint is not given {name}"
+            assert name in zizmor, f"zizmor is not given {name}"
 
 
 class TestLockfileLists:

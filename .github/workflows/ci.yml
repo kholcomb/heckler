@@ -147,8 +147,8 @@ jobs:
       # action.yml from this commit, with no inputs: what a workflow gets
       # when it only names the action. It is ./ and not $/, here and below:
       # GitHub documents $/ for a directory in the repository and says
-      # nothing of an action.yml at the root, and actionlint 1.7.12 takes
-      # $/ for an error.
+      # nothing of an action.yml at the root, and actionlint takes $/ for
+      # an error.
       - name: Action passes the tree
         uses: ./  # zizmor: ignore[self-repository]
 
@@ -209,6 +209,42 @@ jobs:
           python -m venv "$RUNNER_TEMP/clean"
           "$RUNNER_TEMP/clean/bin/pip" install --no-index dist/*.whl
 
+      # pip leaves out a requirement whose marker does not match this
+      # runner, so the install above passes one that is for another
+      # platform. The metadata names every requirement, and only those of
+      # an extra are allowed.
+      - name: Check that the wheel requires nothing
+        run: |
+          "$RUNNER_TEMP/clean/bin/python" -I - <<'EOF'
+          from importlib.metadata import requires
+
+          needed = [r for r in requires("heckler") or [] if "extra ==" not in r]
+          if needed:
+              raise SystemExit(f"The wheel requires: {', '.join(needed)}")
+          EOF
+
+      # Every module in src/, imported from the wheel: one that is missing
+      # from it, or that cannot load with nothing else installed, fails
+      # here. __main__ runs the command line when it is imported, so it is
+      # run and not imported.
+      - name: Import every module from the wheel
+        run: |
+          "$RUNNER_TEMP/clean/bin/python" -I - <<'EOF'
+          import importlib
+          from pathlib import Path
+
+          names = [
+              ".".join(path.relative_to("src").with_suffix("").parts).removesuffix(".__init__")
+              for path in sorted(Path("src").glob("heckler/**/*.py"))
+          ]
+          if not names:
+              raise SystemExit("No modules found under src/heckler.")
+          for name in names:
+              if name != "heckler.__main__":
+                  importlib.import_module(name)
+          EOF
+          "$RUNNER_TEMP/clean/bin/python" -I -m heckler --version
+
       - name: Run the installed package
         run: |
           "$RUNNER_TEMP/clean/bin/heckler" --version
@@ -226,13 +262,23 @@ jobs:
           python-version: '3.12'
       - run: pip install -e ".[dev]"
 
-      # Syntax, expressions and the shell in each run step.
+      # Syntax, expressions and the shell in each run step. Given no file,
+      # actionlint finds the workflows of the repository itself.
       - name: actionlint
         uses: docker://rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
         with:
           args: -color
 
-      # Token permissions, pinning and injection, in the workflows and in
-      # action.yml. Offline: it is given no token and asks GitHub nothing.
+      # The same for the workflow that users copy. actionlint looks in
+      # .github/workflows/ only, so the file is named, and
+      # tests/test_examples.py fails when one under examples/ is not.
+      - name: actionlint, the example
+        uses: docker://rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+        with:
+          args: -color examples/dependency-scan.yml
+
+      # Token permissions, pinning and injection, in the workflows, in
+      # action.yml and in the example workflow. Offline: it is given no token
+      # and asks GitHub nothing.
       - name: zizmor
-        run: zizmor --offline .
+        run: zizmor --offline . examples/dependency-scan.yml
