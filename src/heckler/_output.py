@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sys
 
-from .formatters.text import spell_out
+from .formatters.text import in_github_actions, not_a_command, spell_out
 
 
 def write_out(text: str, *, json_document: bool = False) -> None:
@@ -46,7 +46,7 @@ def write_err(message: str) -> None:
     escape sequence to the terminal. Standard error always replaces what it
     cannot encode, so no encoding probe is needed.
     """
-    print(spell_out(message), file=sys.stderr)
+    print(_own_line(message), file=sys.stderr)
 
 
 def write_line(message: str) -> None:
@@ -54,4 +54,10 @@ def write_line(message: str) -> None:
 
     A formatter's document goes through ``write_out()`` instead.
     """
-    write_out(spell_out(message))
+    write_out(_own_line(message))
+
+
+def _own_line(message: str) -> str:
+    """*message* spelled out, and under GitHub Actions not to be read as a command."""
+    line = spell_out(message)
+    return not_a_command(line) if in_github_actions() else line
