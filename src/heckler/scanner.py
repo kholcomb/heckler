@@ -753,9 +753,13 @@ class Scanner:
         is honoured, whatever the scanner is set to.
 
         *record* gains the ``(line, code point)`` of what is reported or
-        suppressed, and *already* holds such pairs from an earlier reading:
-        they are skipped before a suppression is counted. *trusted* is the
-        set of lines where a directive counts, or None for all of them.
+        suppressed, and *already* holds such pairs from an earlier reading.
+        *trusted* is the set of lines that read the same in that reading.
+        It governs both uses of the earlier one: a directive counts only on
+        such a line (None is every line), and a pair in *already* is skipped,
+        before a suppression is counted, only on such a line (None is
+        none). A line that reads differently is not the same line, whatever
+        its number.
         """
         findings: list[Finding] = []
         source, package = self._classify_path(filename)
@@ -781,8 +785,8 @@ class Scanner:
         def report(col: int, cp: int, info: CharInfo) -> None:
             if not info.severity >= self.severity_threshold:
                 return
-            if (line_num, cp) in already:
-                return  # the first reading reported it on this line
+            if trusted is not None and line_num in trusted and (line_num, cp) in already:
+                return  # the first reading reported it on this line, which reads the same
             if record is not None:
                 record.add((line_num, cp))
             if cp in listed or (bare and info.severity <= _BARE_DIRECTIVE_MAX):

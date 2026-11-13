@@ -6,6 +6,7 @@ scan is for are checked in that reading too, so that bytes which mean nothing
 as UTF-8 cannot hide what they mean in the encoding the file declares.
 """
 
+import base64
 import codecs
 from pathlib import Path
 
@@ -116,6 +117,42 @@ class TestWhatIsNotReadAgain:
         raw = _declaring("latin-1", BODY.format(chr(1)) + chr(0xE9) + "\n")
         names = _names(_write(tmp_path, raw))
         assert names == [_name_of(chr(1))]
+
+    def test_a_character_on_another_line_is_not_taken_for_a_duplicate(self, tmp_path: Path) -> None:
+        # UTF-7 reads this ASCII as a line break and then U+202E, so the lines
+        # that follow are numbered differently in the two readings.
+        shifted = b"+" + base64.b64encode((chr(10) + chr(0x202E)).encode("utf-16-be")).rstrip(b"=")
+        raw = (
+            b"# coding: utf-7\n"
+            + b's = "'
+            + shifted
+            + b'-"\n'
+            + b"y = '"
+            + chr(0x202E).encode("utf-8")
+            + b"'  # heckler-ignore U+202E\n"
+        )
+        scanner = Scanner()
+        path = _write(tmp_path, raw)
+        names = [f.char_name for f in scanner.scan_file(path)]
+        assert names.count(f"Right-to-Left Override {_label('utf-7')}") == 1
+        assert scanner.suppressed == {str(path): 1}
+
+    def test_a_suppressed_character_does_not_cover_another_on_a_line_that_reads_differently(
+        self, tmp_path: Path
+    ) -> None:
+        raw = (
+            b"# coding: gb18030\n"
+            + b"x = '"
+            + chr(0x202E).encode("utf-8")
+            + b"' '"
+            + chr(0x202E).encode("gb18030")
+            + b"'  # heckler-ignore U+202E\n"
+        )
+        scanner = Scanner()
+        path = _write(tmp_path, raw)
+        names = [f.char_name for f in scanner.scan_file(path)]
+        assert names == [f"Right-to-Left Override {_label('gb18030')}"]
+        assert scanner.suppressed == {str(path): 1}
 
     @pytest.mark.parametrize("codec", ["rot13", "base64", "utf-16", "cp037"])
     def test_an_encoding_python_refuses_for_source(self, tmp_path: Path, codec: str) -> None:
