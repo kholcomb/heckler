@@ -20,11 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- The `v1` tag, which moved to the newest 1.x.y release. Releases are tagged with their full version only, so a workflow with `uses: kholcomb/heckler@v1` names one instead, such as `@v1.1.0`
+- **Not part of the interface:** The `v1` tag, which moved to the newest 1.x.y release. Releases are tagged with their full version only, so a workflow with `uses: kholcomb/heckler@v1` names one instead, such as `@v1.1.0`
 
 ### Fixed
 
 - A named pipe in a directory no longer hangs the scan. It is named in a warning, as a socket or a device is, and counts as not scanned (exit code 2 with `--ci`)
+- The package metadata gives the development status as stable. It still said beta
 
 ### Security
 

@@ -4,8 +4,8 @@
 
 | Version | Support Level |
 |---------|--------------|
-| 1.x     | Supported -- receives security fixes |
-| < 1.0.0 | Unsupported -- upgrade required |
+| The newest release | Supported -- security fixes arrive here |
+| Any older release  | Not patched -- fixed by upgrading to the newest release |
 
 ## Reporting a Vulnerability
 
@@ -13,9 +13,20 @@ Please report vulnerabilities through
 [GitHub private vulnerability reporting](https://github.com/kholcomb/heckler/security/advisories/new).
 Do not open public issues for security reports.
 
-We will acknowledge your report within **48 hours** and target a fix
-within **14 days** for critical issues. Lower-severity issues will be
-addressed in the next regular release.
+We will acknowledge your report within **48 hours**.
+
+A fix reaches you in a release, so the targets are for releases. For a
+critical issue we target a release that contains the fix within **14 days**
+of the report. Once a security fix is merged, the release that contains it
+follows within **7 days**, whatever the severity, and is not held for other
+work. A fix for a vulnerability reported in private is merged and released
+on the same day.
+
+Each vulnerability a release fixes has a
+[GitHub security advisory](https://github.com/kholcomb/heckler/security/advisories),
+published on the day of the release, which names the versions affected and
+the version that fixes it. Releases are pinned by exact version and no tag
+moves, so a fix reaches a setup when its pin is changed.
 
 ## Scope
 
@@ -29,13 +40,6 @@ The following categories are considered in-scope vulnerabilities:
   vetting logic into querying or trusting an unintended package source.
 - **Remote code execution during package scanning** -- any code
   execution triggered by processing a package or its metadata.
-
-## Out of Scope
-
-The `testdata/` directory contains intentionally crafted files with
-Unicode sequences and other invisible patterns. These files
-exist solely for testing heckler's detection capabilities. Findings in
-`testdata/` are not vulnerabilities.
 
 ## Disclosure and Credit
 

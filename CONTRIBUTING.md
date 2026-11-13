@@ -138,13 +138,57 @@ a promise about is the interface: the command-line options, exit codes and
 output formats, the configuration keys, the library API, the inputs of the
 GitHub Action and the ids of the pre-commit hooks.
 
-- **MAJOR**: part of that interface is removed or changes meaning, so that a
-  setup which worked has to be changed.
-- **MINOR**: something is added and existing use keeps working. New
-  detections and newly scanned file types are MINOR: a scanner that finds
-  more is doing its job, so a run can start to fail on a MINOR release
-  because of what is found, never because of how heckler is invoked.
-- **PATCH**: fixes that change none of the above.
+The level of a release is the highest level of any change merged since the
+last release. Ask three questions of each change, in this order:
+
+1. Does a setup that worked have to be edited to keep working? Then the
+   change is MAJOR. This covers a command-line option, exit code, output
+   format, configuration key, library name, Action input or pre-commit hook
+   id that is removed or changes meaning, and a raised minimum Python
+   version.
+2. Is there something new to use, or can a run that passed now fail with the
+   setup unchanged? Then it is MINOR. This covers a new option, key, library
+   name, Action input or output field; a new detection; newly scanned files;
+   and a fix that makes heckler refuse or fail where it used to pass in
+   silence, when the documentation already said it would.
+3. Otherwise it is PATCH: a crash or a hang that is fixed, wrong text in a
+   message or a label, packaging, documentation, speed.
+
+Four rules go with them:
+
+- Security is not a level. It decides how soon a release is made; the
+  questions above decide the number.
+- A tag is not part of the interface. Only full versions are tagged.
+- A change is judged by what a user can observe, not by its commit type. A
+  commit typed `fix` can be MINOR.
+- When two answers are defensible, the higher level is taken.
+
+Every change a user can observe has an entry under `[Unreleased]` in
+`CHANGELOG.md`, added by the pull request that makes the change. The heading
+it is under records its level:
+
+| Heading | Level |
+|---|---|
+| `Fixed`, `Security` | PATCH |
+| `Added`, `Changed`, `Deprecated` | MINOR |
+| `Removed` | MAJOR, or MINOR when what is removed is not part of the interface |
+
+Two markings make the level readable where a heading is not enough. Each is
+the first thing in the entry, written exactly as shown:
+
+- An entry that is MAJOR by the first question starts with `**MAJOR:** `,
+  whatever heading it is under. A change of meaning or a raised minimum
+  Python version is under `Changed` and marked this way. For example:
+  `**MAJOR:** The exit code for an unreadable file is now 2, not 1`.
+- An entry under `Removed` starts with either `**MAJOR:** ` or
+  `**Not part of the interface:** `. One that starts with neither is not
+  accepted. For example:
+  ``**Not part of the interface:** The `v1` tag``.
+
+A fix that is MINOR by the second question has an entry under `Changed` as
+well as under `Fixed` or `Security`. The level of a release is read from the
+headings and markings present under `[Unreleased]`, and the maintainer
+confirms it in the release pull request.
 
 To release:
 
@@ -161,8 +205,8 @@ publishing if the tag does not match `_version.py` or `CHANGELOG.md` has no
 section for the version. It publishes to PyPI and creates the GitHub release.
 
 Full versions are the only tags. There is no major tag such as `v1` that
-moves with each release, so `uses: kholcomb/heckler@v1.1.0` names one release
-and keeps naming it.
+moves with each release, so `uses: kholcomb/heckler@vMAJOR.MINOR.PATCH` names
+one release and keeps naming it.
 
 ## Reporting Bugs
 
