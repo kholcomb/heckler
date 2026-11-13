@@ -87,7 +87,7 @@ Tests fail when these drift, so change both sides together.
 
 - Commit subjects follow Conventional Commits (`fix(scanner): ...`); the commit-msg hook rejects anything else. `main` takes changes through pull requests only.
 - Branch names: `<type>/<slug>` for any change, with a Conventional Commits type and a few lowercase words joined by `-`; `release/X.Y.Z` for the release pull request, which holds the version bump and the changelog move only; `item/<id>` is reserved for the work-item workflow. A branch named after a local worktree (`worktree-*`), or one that holds only local notes, is never pushed.
-- A branch is cut from `origin/main` after `git fetch origin`, and brought level with `origin/main` before a pull request is opened or updated. After the merge, the branch is deleted locally and its worktree removed; GitHub deletes the remote branch.
+- A branch is cut from `origin/main` after `git fetch origin`, and brought level with `origin/main` before a pull request is opened or updated. After the merge, the branch is deleted on GitHub and locally, and its worktree removed.
 - Squash merge only. The pull request title becomes the squash subject on `main`, so it must be a Conventional Commits subject; the commit-msg hook cannot see it.
 - Stacked pull requests are at most two deep. The upper one targets the lower one's branch and says "Depends on #N" and "merge #N first" in its body. After the lower one merges, rebase the upper one onto `origin/main` so that only its own commits remain, run the checks and hooks again, and push it with `--force-with-lease`. `main` is never force-pushed.
 - An agent opens pull requests and never merges one.

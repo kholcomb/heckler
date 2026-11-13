@@ -137,9 +137,9 @@ version.
    change does and why. Keep to one change per pull request. Pull requests
    are squash-merged and the title becomes the commit subject on `main`, so
    the title is itself a Conventional Commits subject.
-5. If your change needs another pull request that is still in review, target
-   that pull request's branch instead of `main` and write "Depends on #N" in
-   the body.
+5. If your change needs another pull request that is still in review, open
+   yours against `main` as well, write "Depends on #N" in the body, and
+   rebase it onto `main` after #N merges.
 6. A maintainer reviews the pull request and squash-merges it.
 7. Report a vulnerability as [`SECURITY.md`](SECURITY.md) describes, not in a
    public issue or pull request.
