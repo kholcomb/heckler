@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import NoReturn
 
-from ._output import write_out
+from ._output import write_err, write_out
 from ._version import __version__
 from .characters import Severity
 from .config import Config, ConfigError, load_config
@@ -18,8 +19,27 @@ from .scanner import Finding, Scanner
 _MAX_PATHS_NAMED = 5
 
 
+class _Parser(argparse.ArgumentParser):
+    """An argument parser whose errors go out through ``write_err()``.
+
+    argparse echoes back an argument it cannot use, so the text of an
+    error is input like any other. The usage and the message read as
+    argparse writes them.
+    """
+
+    def error(self, message: str) -> NoReturn:
+        # Python 3.14 colours the usage on a terminal, and write_err() would
+        # spell every escape of it out. The parser exits below, so help and
+        # version output are not affected; before 3.14 this is unused.
+        self.color = False
+        for line in self.format_usage().splitlines():
+            write_err(line)
+        write_err(f"{self.prog}: error: {message}")
+        self.exit(2)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _Parser(
         prog="heckler",
         description=(
             "Detect dangerous invisible Unicode characters in source code and dependencies."
@@ -141,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
     except (FileNotFoundError, ConfigError) as e:
         # Settings that were not read are not settings to run with: a scan
         # under the defaults could report less than the file asked for.
-        print(f"Error: {e}", file=sys.stderr)
+        write_err(f"Error: {e}")
         return 2
 
     # CLI overrides
@@ -164,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     if missing:
         # Scanning nothing and reporting it as clean is the one thing a
         # mistyped path must not do.
-        print(f"Error: path not found: {', '.join(map(str, missing))}", file=sys.stderr)
+        write_err(f"Error: path not found: {', '.join(map(str, missing))}")
         return 2
 
     scanner = _build_scanner(args, config, scan_deps=config.scan_deps)
@@ -194,7 +214,7 @@ def _report_skipped(scanner: Scanner) -> list[str]:
     # an escape sequence or a line break to the terminal.
     messages = [f"{spell_out(path)} was not scanned: {reason}" for path, reason in scanner.skipped]
     for message in messages:
-        print(f"Warning: {message}", file=sys.stderr)
+        write_err(f"Warning: {message}")
     return messages
 
 
@@ -226,10 +246,9 @@ def _finish(
         return 1
     if args.ci and unscanned and not args.allow_unscanned:
         # Something nobody looked at is not a clean result.
-        print(
+        write_err(
             f"Error: {len(unscanned)} item(s) could not be scanned (see the warnings"
             f" above). {advice}",
-            file=sys.stderr,
         )
         return 2
     return 0
@@ -252,28 +271,26 @@ def _report_suppressions(scanner: Scanner) -> None:
     if scanner.skipped_dirs:
         named = _name_some(scanner.skipped_dirs)
         advice = "" if scanner.scan_deps else " --scan-deps scans dependency directories."
-        print(f"Note: not scanned, skipped by directory name: {named}.{advice}", file=sys.stderr)
+        write_err(f"Note: not scanned, skipped by directory name: {named}.{advice}")
     if scanner.binary:
         # By name, so that a file made to be one of these can be told from
         # the images and archives that are expected. "As text", because one
         # that is mostly text was scanned for the text inside it, and may
         # have findings in the report above.
         named = _name_some(scanner.binary)
-        print(f"Note: not scanned as text, binary by content: {named}.", file=sys.stderr)
+        write_err(f"Note: not scanned as text, binary by content: {named}.")
     if scanner.suppressed:
-        print(
+        write_err(
             f"Note: {sum(scanner.suppressed.values())} finding(s) suppressed in"
             f" {len(scanner.suppressed)} file(s) by heckler-ignore comments."
             " Run with --no-suppress to list them.",
-            file=sys.stderr,
         )
     if scanner.unlisted:
-        print(
+        write_err(
             f"Note: {scanner.unlisted} of the findings are on a line with a heckler-ignore"
             " comment that does not cover them. Without a list, a comment covers MEDIUM"
             " and below; name the code points to cover more, for example:"
             " heckler-ignore U+FE0F",
-            file=sys.stderr,
         )
 
 
@@ -301,10 +318,9 @@ def _run_diff_only(args: argparse.Namespace, config: Config) -> int:
     lockfile_paths: list[str] = args.paths or []
     if not lockfile_paths:
         # No lockfile is no packages, and no packages would come out as clean.
-        print(
+        write_err(
             "Error: --diff-only needs the lockfiles to check, for example:"
             " heckler --scan-deps --diff-only package-lock.json",
-            file=sys.stderr,
         )
         return 2
     unscanned: list[str] = []

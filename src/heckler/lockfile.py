@@ -22,6 +22,7 @@ import sysconfig
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, NamedTuple, cast
 
+from ._output import write_err
 from .formatters.text import spell_out
 from .scanner import Scanner
 
@@ -114,10 +115,9 @@ def parse_changed_packages(
     elif ecosystem == "pipenv":
         return _parse_pipfile_lock_diff(diff_text)
     elif ecosystem in _UNPARSED_ECOSYSTEMS:
-        print(
+        write_err(
             f"Warning: {ecosystem} lockfile parsing is not yet supported. "
             f"Changed packages will not be scanned with --diff-only.",
-            file=sys.stderr,
         )
         return []
     return []
@@ -1124,7 +1124,7 @@ def scan_changed_deps(
     _installed_distributions.cache_clear()
 
     def not_scanned(message: str) -> None:
-        print(f"Warning: {message}", file=sys.stderr)
+        write_err(f"Warning: {message}")
         if unscanned is not None:
             unscanned.append(message)
 
@@ -1139,7 +1139,7 @@ def scan_changed_deps(
 
         diff_text = get_lockfile_diff(lf_path)
         if not diff_text:
-            print(f"Warning: No diff available for {lf_path}. Skipping.", file=sys.stderr)
+            write_err(f"Warning: No diff available for {lf_path}. Skipping.")
             continue
 
         problems: list[str] = []

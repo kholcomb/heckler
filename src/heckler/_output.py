@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import sys
 
+from .formatters.text import spell_out
+
 
 def write_out(text: str, *, json_document: bool = False) -> None:
     """Print ``text`` and a newline to ``sys.stdout``.
@@ -34,3 +36,22 @@ def write_out(text: str, *, json_document: bool = False) -> None:
         else:
             text = text.encode(encoding, "backslashreplace").decode(encoding)
     print(text)
+
+
+def write_err(message: str) -> None:
+    """Print a message of heckler's own to ``sys.stderr``, names spelled out.
+
+    Every control and invisible character in ``message`` is written as
+    ``<U+XXXX>``, so a file, archive or package name in it cannot send an
+    escape sequence to the terminal. Standard error always replaces what it
+    cannot encode, so no encoding probe is needed.
+    """
+    print(spell_out(message), file=sys.stderr)
+
+
+def write_line(message: str) -> None:
+    """Print a line of heckler's own to standard output, names spelled out.
+
+    A formatter's document goes through ``write_out()`` instead.
+    """
+    write_out(spell_out(message))
