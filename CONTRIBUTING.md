@@ -57,8 +57,10 @@ pre-commit run --all-files
 The CI pipeline runs the following on Python 3.11 through 3.14 on Linux, and
 on Python 3.12 on Windows and macOS. Please ensure they all pass locally
 before opening a pull request. CI also runs the commit hooks and the action
-in `action.yml`, builds the package and installs the wheel, and lints the
-workflows with actionlint; there is nothing to run locally for those.
+in `action.yml`, uploads the action's scan of the tree to code scanning,
+builds the package and installs the wheel, and lints the workflows with
+actionlint; there is nothing to run locally for those. A pull request from
+a fork cannot upload, so its merge waits on a maintainer.
 
 **Linting (Ruff):**
 
