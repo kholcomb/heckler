@@ -328,15 +328,16 @@ _LINE_BREAK_BYTES_RE = re.compile(rb"\r\n|\r|\n")
 _DECLARATION_BYTES = b"# -*- coding= : x-y_z.0 -*-\t\f\r\n"
 
 
-def _first_lines(raw: bytes, count: int = 2) -> list[bytes]:
-    lines: list[bytes] = []
+def _first_lines(raw: bytes, count: int = 2) -> list[tuple[bytes, int]]:
+    """The first *count* lines of *raw*, each with where it ends, its line break included."""
+    lines: list[tuple[bytes, int]] = []
     start = 0
     for brk in _LINE_BREAK_BYTES_RE.finditer(raw):
-        lines.append(raw[start : brk.start()])
+        lines.append((raw[start : brk.start()], brk.end()))
         start = brk.end()
         if len(lines) == count:
             return lines
-    return [*lines, raw[start:]][:count]
+    return [*lines, (raw[start:], len(raw))][:count]
 
 
 def _normal_name(name: str) -> str:
@@ -368,11 +369,15 @@ def _source_codec(name: str) -> str | None:
     return codec if same else None
 
 
-def _declared_codecs(raw: bytes) -> tuple[list[str], list[str]]:
-    """The codecs the first two lines of *raw* declare, and the names this Python does not know."""
-    known: list[str] = []
+def _declared_codecs(raw: bytes) -> tuple[dict[str, list[int]], list[str]]:
+    """The codecs the first two lines of *raw* declare, and the names this Python does not know.
+
+    Each codec comes with where each line that declares it ends in *raw*.
+    """
+    known: dict[str, list[int]] = {}
     unknown: list[str] = []
-    for line in _first_lines(raw.removeprefix(codecs.BOM_UTF8)):
+    text = raw.removeprefix(codecs.BOM_UTF8)
+    for line, end in _first_lines(text):
         match = _DECLARATION_RE.match(line)
         if not match:
             continue
@@ -382,8 +387,8 @@ def _declared_codecs(raw: bytes) -> tuple[list[str], list[str]]:
         except LookupError:
             unknown.append(name)
             continue
-        if codec and codec not in known:
-            known.append(codec)
+        if codec:
+            known.setdefault(codec, []).append(len(raw) - len(text) + end)
     return known, unknown
 
 
@@ -967,32 +972,50 @@ class Scanner:
         *,
         looks_binary: bool = False,
     ) -> list[Finding]:
-        """The file read in each encoding its first two lines declare, less the first reading."""
+        """The file read in each encoding its first two lines declare, less the first reading.
+
+        Each encoding is read two ways. The file is decoded from its first
+        byte, as it is when it is imported. And it is kept as it is up to the
+        end of each line that declares the encoding, with what follows
+        decoded afresh, as some versions of Python read a file they run:
+        what the declaring line leaves pending in the decoder (an escape it
+        opens, a shift it makes) then does not reach the lines after it.
+        The second way is scanned when it gives text of its own, and a
+        finding the first way made at the same place is not repeated.
+        """
         declared, unknown = _declared_codecs(raw)
         if unknown and not _is_valid_utf8(raw):
             for label in unknown:
-                reason = (
-                    f"it declares an encoding this Python does not know ({label});"
-                    " it was read as UTF-8 only"
-                )
+                reason = f"it declares an encoding this Python does not know ({label})"
                 self.skipped.append((name, reason))
         findings: list[Finding] = []
-        for codec in declared:
+        for codec, ends in declared.items():
             if first_text is None:
                 first_text = raw.decode("utf-8", errors="replace")
-            text = raw.decode(codec, errors="replace")
-            if text == first_text:
-                continue
-            reading = self._scan_text(
-                text,
-                name,
-                controls=not looks_binary,
-                directives=not looks_binary,
-                already=first,
-                trusted=None if looks_binary else _same_lines(first_text, text),
-            )
-            _label_reading(reading, f"read as {codec.upper()}, as declared")
-            findings.extend(reading)
+            texts = [raw.decode(codec, errors="replace")]
+            for end in ends:
+                kept = raw[:end].decode("utf-8", errors="replace")
+                texts.append(kept + raw[end:].decode(codec, errors="replace"))
+            seen = {first_text}
+            whole: set[tuple[int, int, int]] = set()
+            for i, text in enumerate(texts):
+                if text in seen:
+                    continue
+                seen.add(text)
+                reading = self._scan_text(
+                    text,
+                    name,
+                    controls=not looks_binary,
+                    directives=not looks_binary,
+                    already=first,
+                    trusted=None if looks_binary else _same_lines(first_text, text),
+                )
+                if i == 0:
+                    whole = {(f.line, f.column, f.codepoint) for f in reading}
+                else:
+                    reading = [f for f in reading if (f.line, f.column, f.codepoint) not in whole]
+                _label_reading(reading, f"read as {codec.upper()}, as declared")
+                findings.extend(reading)
         return findings
 
     def _scan_text_inside(self, filepath: Path) -> list[Finding]:

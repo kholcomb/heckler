@@ -17,7 +17,7 @@ import pytest
 
 from heckler import lockfile, vet
 from heckler.cli import main
-from heckler.scanner import Scanner
+from heckler.scanner import Scanner, _source_codec
 
 RLO, RLM, NEL, NBSP = chr(0x202E), chr(0x200F), chr(0x85), chr(0xA0)
 BODY = "x = 'a{}b'\n"
@@ -99,9 +99,72 @@ class TestADeclaredEncodingIsRead:
         assert f"{_name_of(char)} {_label(codec)}" in _names(path)
 
 
+BACKSLASH = chr(0x5C)
+
+
+def _escaped(pending: str, *, first: str = "", padding: str = "") -> bytes:
+    """A file declaring unicode_escape whose declaring line ends in *pending*.
+
+    What follows is a right-to-left override, written as an escape.
+    """
+    return (
+        first
+        + "# coding: unicode_escape "
+        + pending
+        + "\n"
+        + padding
+        + "x = '"
+        + BACKSLASH
+        + "u202e'\n"
+    ).encode("ascii")
+
+
+class TestWhatFollowsTheDeclaringLineIsReadAfresh:
+    """A file that is run is read up to the end of its declaring line as it is,
+    and from there on with a decoder that starts afresh, so what that line
+    leaves pending does not reach the lines after it."""
+
+    # An escape the declaring line opens and never closes.
+    OPEN = BACKSLASH + "N{"
+
+    def test_on_the_first_line(self, tmp_path: Path) -> None:
+        path = _write(tmp_path, _escaped(self.OPEN))
+        assert _names(path) == [f"Right-to-Left Override {_label('unicode_escape')}"]
+
+    @pytest.mark.parametrize(
+        ("first", "pending"),
+        [("#!/bin/sh\n", OPEN), (f"#!/bin/sh {OPEN}\n", "")],
+        ids=["opened-on-line-2", "opened-on-line-1"],
+    )
+    def test_on_the_second_line(self, tmp_path: Path, first: str, pending: str) -> None:
+        path = _write(tmp_path, _escaped(pending, first=first))
+        assert _names(path) == [f"Right-to-Left Override {_label('unicode_escape')}"]
+
+    def test_a_character_both_readings_hold_is_reported_once(self, tmp_path: Path) -> None:
+        # A short hex escape: the declaring line reads differently, and what
+        # follows it reads the same in both readings.
+        path = _write(tmp_path, _escaped(BACKSLASH + "x4"))
+        assert _names(path) == [f"Right-to-Left Override {_label('unicode_escape')}"]
+
+    def test_an_encoding_that_carries_nothing_over_adds_no_repeat(self, tmp_path: Path) -> None:
+        path = _write(tmp_path, _declaring("gb18030", BODY.format(RLO)))
+        assert _names(path) == [f"Right-to-Left Override {_label('gb18030')}"]
+
+    def test_in_a_file_that_looks_binary(self, tmp_path: Path) -> None:
+        padding = "# " + chr(1) * 400 + "\n"
+        _write(tmp_path, _escaped(self.OPEN, padding=padding), "tool")
+        scanner = Scanner()
+        findings = scanner.scan_path(tmp_path)
+        assert [f.char_name for f in findings] == [
+            f"Right-to-Left Override {_label('unicode_escape')}"
+        ]
+        assert str(tmp_path / "tool") in scanner.binary
+
+
 class TestWhatIsNotReadAgain:
     @pytest.mark.parametrize("codec", ["utf-8", "utf8", "UTF_8", "utf-8-sig", "utf-8-unix"])
     def test_utf8_under_any_of_its_names(self, tmp_path: Path, codec: str) -> None:
+        assert _source_codec(codec) is None
         body = BODY.format(RLO).encode("utf-8")
         declared = _write(tmp_path, f"# coding: {codec}\n".encode("ascii") + body, "declared.py")
         plain = _write(tmp_path, b"# comment\n" + body, "plain.py")
@@ -112,6 +175,12 @@ class TestWhatIsNotReadAgain:
     def test_ascii_under_a_legacy_declaration(self, tmp_path: Path) -> None:
         path = _write(tmp_path, _declaring("latin-1", "plain\n"))
         assert _names(path) == []
+
+    def test_a_reading_that_gives_the_first_text_is_not_scanned(self) -> None:
+        # Nothing is passed as already reported, so only the skip keeps the
+        # control character from being reported a second time.
+        raw = _declaring("latin-1", BODY.format(chr(1)))
+        assert Scanner()._declared_readings(raw, "sample.py", raw.decode("utf-8"), set()) == []
 
     def test_a_character_the_first_reading_reported_is_not_reported_twice(
         self, tmp_path: Path
