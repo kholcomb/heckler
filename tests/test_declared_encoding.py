@@ -300,12 +300,64 @@ class TestFindingsCap:
 
 
 class TestDirectivesInTheDeclaredReading:
-    def test_on_a_line_that_reads_the_same(self, tmp_path: Path) -> None:
+    def test_a_listed_code_point_on_a_next_line_that_reads_differently(
+        self, tmp_path: Path
+    ) -> None:
         raw = _declaring("latin-1", "# heckler-ignore-next-line U+00A0\n" + BODY.format(NBSP))
         scanner = Scanner()
         path = _write(tmp_path, raw)
         assert scanner.scan_file(path) == []
         assert scanner.suppressed == {str(path): 1}
+
+    def test_not_another_code_point_on_that_line(self, tmp_path: Path) -> None:
+        raw = _declaring("latin-1", "# heckler-ignore-next-line U+00A0\n" + BODY.format(NBSP + NEL))
+        scanner = Scanner()
+        path = _write(tmp_path, raw)
+        names = [f.char_name for f in scanner.scan_file(path)]
+        assert names == [f"{_name_of(NEL)} {_label('latin-1')}"]
+        assert scanner.suppressed == {str(path): 1}
+
+    def test_a_directive_without_a_list_covers_nothing_on_a_next_line_that_reads_differently(
+        self, tmp_path: Path
+    ) -> None:
+        raw = _declaring("latin-1", "# heckler-ignore-next-line\n" + BODY.format(NBSP))
+        scanner = Scanner()
+        path = _write(tmp_path, raw)
+        names = [f.char_name for f in scanner.scan_file(path)]
+        assert names == [f"{_name_of(NBSP)} {_label('latin-1')}"]
+        assert scanner.suppressed == {}
+        assert scanner.unlisted == 0
+
+    def test_a_directive_without_a_list_covers_a_next_line_that_reads_the_same(
+        self, tmp_path: Path
+    ) -> None:
+        # The last line makes the two readings differ.
+        raw = _declaring(
+            "latin-1", "# heckler-ignore-next-line\n" + "a" + chr(1) + "b\n" + chr(0xE9) + "\n"
+        )
+        scanner = Scanner()
+        path = _write(tmp_path, raw)
+        assert scanner.scan_file(path) == []
+        assert scanner.suppressed == {str(path): 1}
+        assert scanner.unlisted == 0
+
+    def test_a_directive_without_a_list_covers_nothing_the_second_reading_holds_there(
+        self, tmp_path: Path
+    ) -> None:
+        # Decoded from its first byte, the file is lost in the escape the
+        # declaring line opens. Decoded afresh after that line, the escape on
+        # the last line is U+00A0, which the first reading does not hold.
+        raw = (
+            "# coding: unicode_escape " + BACKSLASH + "N{\n"
+            "# heckler-ignore-next-line\n"
+            "x = 'a" + BACKSLASH + "u00a0b'\n"
+        ).encode("ascii")
+        scanner = Scanner()
+        path = _write(tmp_path, raw)
+        names = [f.char_name for f in scanner.scan_file(path)]
+        assert names == [f"{_name_of(NBSP)} {_label('unicode_escape')}"]
+        assert scanner.suppressed == {}
+        assert scanner.unlisted == 0
 
     def test_not_one_that_only_the_declared_reading_holds(self, tmp_path: Path) -> None:
         # UTF-7 reads the first line below as a directive; as UTF-8 it is

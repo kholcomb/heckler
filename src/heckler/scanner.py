@@ -760,11 +760,13 @@ class Scanner:
         *record* gains the ``(line, code point)`` of what is reported or
         suppressed, and *already* holds such pairs from an earlier reading.
         *trusted* is the set of lines that read the same in that reading.
-        It governs both uses of the earlier one: a directive counts only on
-        such a line (None is every line), and a pair in *already* is skipped,
-        before a suppression is counted, only on such a line (None is
-        none). A line that reads differently is not the same line, whatever
-        its number.
+        It governs three uses of the earlier one. A directive counts only
+        on such a line (None is every line). A next-line directive covers a
+        next line that is not such a line only for the code points it
+        lists, so one without a list covers nothing there. And a pair in
+        *already* is skipped, before a suppression is counted, only on such
+        a line (None is none). A line that reads differently is not the
+        same line, whatever its number.
         """
         findings: list[Finding] = []
         source, package = self._classify_path(filename)
@@ -815,6 +817,8 @@ class Scanner:
         for line_num, line in enumerate(_LINE_BREAK_RE.split(text), 1):
             bare, listed = next_bare, next_listed
             next_bare, next_listed = False, _NOTHING
+            if trusted is not None and line_num not in trusted:
+                bare = False  # on a line that reads differently, only what is listed
             if honor and (trusted is None or line_num in trusted):
                 directive = _IGNORE_NEXT_LINE_RE.match(line)
                 if directive:
