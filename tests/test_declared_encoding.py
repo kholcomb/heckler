@@ -8,10 +8,14 @@ as UTF-8 cannot hide what they mean in the encoding the file declares.
 
 import base64
 import codecs
+import io
+import json
+import tarfile
 from pathlib import Path
 
 import pytest
 
+from heckler import lockfile, vet
 from heckler.cli import main
 from heckler.scanner import Scanner
 
@@ -224,3 +228,132 @@ class TestFindingsCap:
         names = _names(path)
         assert f"{_name_of(RLM)} {_label('cp1255')}" in names
         assert capsys.readouterr().err.count("stopped after 10000 findings") == 1
+
+
+class TestDirectivesInTheDeclaredReading:
+    def test_on_a_line_that_reads_the_same(self, tmp_path: Path) -> None:
+        raw = _declaring("latin-1", "# heckler-ignore-next-line U+00A0\n" + BODY.format(NBSP))
+        scanner = Scanner()
+        path = _write(tmp_path, raw)
+        assert scanner.scan_file(path) == []
+        assert scanner.suppressed == {str(path): 1}
+
+    def test_not_one_that_only_the_declared_reading_holds(self, tmp_path: Path) -> None:
+        # UTF-7 reads the first line below as a directive; as UTF-8 it is
+        # plain ASCII that no reviewer of the file would take for one.
+        directive = (
+            b"+"
+            + base64.b64encode("#".encode("utf-16-be")).rstrip(b"=")
+            + b"- heckler-ignore-next-line U+202E\n"
+        )
+        raw = _declaring("utf-7", "") + directive + BODY.format(RLO).encode("utf-7")
+        names = _names(_write(tmp_path, raw))
+        assert f"Right-to-Left Override {_label('utf-7')}" in names
+
+    def test_not_counted_twice(self, tmp_path: Path) -> None:
+        # The last line makes the two readings differ.
+        raw = _declaring("latin-1", "a" + chr(1) + "b # heckler-ignore U+0001\n" + chr(0xE9) + "\n")
+        scanner = Scanner()
+        path = _write(tmp_path, raw)
+        assert scanner.scan_file(path) == []
+        assert scanner.suppressed == {str(path): 1}
+
+    def test_never_in_dependency_code(self, tmp_path: Path) -> None:
+        raw = _declaring("latin-1", "# heckler-ignore-next-line U+00A0\n" + BODY.format(NBSP))
+        (tmp_path / "node_modules" / "pkg").mkdir(parents=True)
+        _write(tmp_path / "node_modules" / "pkg", raw, "index.js")
+        names = [f.char_name for f in Scanner(scan_deps=True).scan_path(tmp_path)]
+        assert f"{_name_of(NBSP)} {_label('latin-1')}" in names
+
+
+SAMPLE = _declaring("gb18030", BODY.format(RLO))
+
+
+def _tar_gz(path: Path, files: dict[str, bytes]) -> Path:
+    with tarfile.open(path, "w:gz") as tf:
+        for name, content in files.items():
+            info = tarfile.TarInfo(name=name)
+            info.size = len(content)
+            tf.addfile(info, io.BytesIO(content))
+    return path
+
+
+def _diff(*packages: tuple[str, str]) -> str:
+    lines = ["+{", '+  "lockfileVersion": 3,', '+  "packages": {']
+    for name, version in packages:
+        lines += [f'+    "node_modules/{name}": {{', f'+      "version": "{version}"', "+    },"]
+    lines += ["+  }", "+}"]
+    return "\n".join(lines) + "\n"
+
+
+class TestEveryWayIn:
+    @pytest.mark.parametrize("name", ["tool.py", "tool"])
+    def test_a_walk(self, tmp_path: Path, name: str) -> None:
+        _write(tmp_path, SAMPLE, name)
+        names = [f.char_name for f in Scanner().scan_path(tmp_path)]
+        assert f"Right-to-Left Override {_label('gb18030')}" in names
+
+    def test_a_file_passed_by_name(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = _write(tmp_path, SAMPLE)
+        assert main(["--ci", str(path)]) == 1
+        assert "as declared" in capsys.readouterr().out
+
+    def test_the_pre_commit_hook(self, tmp_path: Path) -> None:
+        path = _write(tmp_path, SAMPLE)
+        assert main(["--ci", "--skip-binary", str(path)]) == 1
+
+    def test_a_file_that_looks_binary(self, tmp_path: Path) -> None:
+        padding = b"# coding: gb18030\n# " + (chr(1) * 400).encode("ascii") + b"\n"
+        directive = b"# heckler-ignore-next-line U+202E\n"
+        body = BODY.format(RLO).encode("gb18030")
+        _write(tmp_path, padding + body, "tool")
+        scanner = Scanner()
+        findings = scanner.scan_path(tmp_path)
+        assert f"Right-to-Left Override {_label('gb18030')}" in [f.char_name for f in findings]
+        assert str(tmp_path / "tool") in scanner.binary
+        assert not any(f.codepoint < 0x20 for f in findings)
+
+        # A directive in a file like this suppresses nothing.
+        _write(tmp_path, padding + directive + body, "tool")
+        scanner = Scanner()
+        names = [f.char_name for f in scanner.scan_path(tmp_path)]
+        assert f"Right-to-Left Override {_label('gb18030')}" in names
+
+    def test_vet(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        archive = _tar_gz(tmp_path / "pkg-1.0.tar.gz", {"pkg-1.0/tool.py": SAMPLE})
+
+        def fake(
+            spec: str,
+            registry: str,
+            tmpdir: str,
+            not_scanned: list[tuple[str, str]] | None = None,
+        ) -> list[Path]:
+            return [archive]
+
+        monkeypatch.setattr(vet, "download_package", fake)
+        assert main(["--no-color", "--registry", "pypi", "--vet", "pkg==1.0"]) == 1
+        assert "as declared" in capsys.readouterr().out
+
+    def test_diff_only(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        (tmp_path / "node_modules" / "pkg").mkdir(parents=True)
+        _write(tmp_path / "node_modules" / "pkg", SAMPLE, "index.js")
+        (tmp_path / "node_modules" / "pkg" / "package.json").write_text(
+            json.dumps({"version": "1.0.0"}), encoding="utf-8"
+        )
+        diff = _diff(("pkg", "1.0.0"))
+        monkeypatch.setattr(lockfile, "get_lockfile_diff", lambda path: diff)
+        args = ["--ci", "--no-color", "--scan-deps", "--diff-only"]
+        assert main([*args, str(tmp_path / "package-lock.json")]) == 1
+        assert "as declared" in capsys.readouterr().out

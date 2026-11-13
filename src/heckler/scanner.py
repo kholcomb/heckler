@@ -1015,6 +1015,10 @@ class Scanner:
         reading reports neither, so a file it found nothing in has still not
         been scanned as text is.
 
+        A declared encoding is read in full whatever share of the file is
+        junk, without control characters and directives, and the file is
+        still named.
+
         A file too large to read is left out as binary too. It is recorded
         in ``binary`` and not in ``skipped``, so the large media files of a
         repository do not fail a run.
@@ -1023,6 +1027,14 @@ class Scanner:
         if raw is None:
             return []
         self.binary.append(str(filepath))
+        findings = self._text_runs(raw, str(filepath))
+        findings.extend(
+            self._declared_readings(raw, str(filepath), None, frozenset(), looks_binary=True)
+        )
+        return findings
+
+    def _text_runs(self, raw: bytes, name: str) -> list[Finding]:
+        """Scan the runs of text in a file whose start looks binary."""
         if not _is_utf8_text(raw, _MOSTLY_TEXT_RATIO):
             return []
         # Everything that is reported from this reading is U+00A0 or above,
@@ -1032,7 +1044,7 @@ class Scanner:
         text = _text_inside(raw.decode("utf-8", errors="replace"))
         if text is None:
             return []
-        findings = self._scan_text(text, str(filepath), controls=False, directives=False)
+        findings = self._scan_text(text, name, controls=False, directives=False)
         _label_reading(findings, _LOOKS_BINARY)
         return findings
 
