@@ -74,6 +74,7 @@ Tests fail when these drift, so change both sides together.
 - The `files:` pattern of the `heckler-lockfile` hook in `.pre-commit-hooks.yaml` and `detect_ecosystem()` in `lockfile.py` (`tests/test_lockfile.py`).
 - `examples/dependency-scan.yml` (`tests/test_examples.py`): its two trigger lists and the lockfiles its install step handles are the same set, and the promises in its header (no package scripts, wheels only, no cache, a read-only token) are checked.
 - `CHANGELOG.md` follows Keep a Changelog. User-visible changes go under `[Unreleased]` as one-line entries that describe behaviour.
+- The job names in `.github/workflows/ci.yml`, matrix entries included, and the required status checks of the ruleset on `main`. No test can check this: when a job is renamed or added, the owner changes the ruleset to match, or every pull request waits on a check that never reports.
 
 ## Tests and fixtures
 
@@ -85,5 +86,12 @@ Tests fail when these drift, so change both sides together.
 ## Commits and releases
 
 - Commit subjects follow Conventional Commits (`fix(scanner): ...`); the commit-msg hook rejects anything else. `main` takes changes through pull requests only.
+- Branch names: `<type>/<slug>` for any change, with a Conventional Commits type and a few lowercase words joined by `-`; `release/X.Y.Z` for the release pull request, which holds the version bump and the changelog move only; `item/<id>` is reserved for the work-item workflow. A branch named after a local worktree (`worktree-*`), or one that holds only local notes, is never pushed.
+- A branch is cut from `origin/main` after `git fetch origin`, and brought level with `origin/main` before a pull request is opened or updated. After the merge, the branch is deleted on GitHub and locally, and its worktree removed.
+- Squash merge only. The pull request title becomes the squash subject on `main`, so it must be a Conventional Commits subject; the commit-msg hook cannot see it.
+- Stacked pull requests are at most two deep. The upper one targets the lower one's branch and says "Depends on #N" and "merge #N first" in its body. After the lower one merges, rebase the upper one onto `origin/main` so that only its own commits remain, run the checks and hooks again, and push it with `--force-with-lease`. `main` is never force-pushed.
+- An agent opens pull requests and never merges one.
+- A security fix is built and tested on a local `fix/<slug>` branch with a neutral slug, and is not pushed until the day of the release. Then it is opened as an ordinary pull request described by behaviour: the triggering input stays out of the branch name, the title, the body and the commit messages. It merges after CI, and the release follows the same day.
+- Only changes that users or CI get go to GitHub. Specs, plans and other local working notes stay on this machine.
 - Versions follow Semantic Versioning, and `CONTRIBUTING.md` says what counts as MAJOR, MINOR and PATCH for this tool. The version lives in `src/heckler/_version.py`.
 - A release is a tag of the form `vMAJOR.MINOR.PATCH` on `main`. `.github/workflows/release.yml` runs for no other tag, and stops before publishing when the tag does not match `_version.py` or `CHANGELOG.md` has no section for the version. It publishes to PyPI and creates the GitHub release. The tag is signed (`git tag -s`), and full versions are the only tags: there is no major tag such as `v1`.

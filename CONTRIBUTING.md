@@ -125,12 +125,24 @@ version.
 
 ## Submitting Changes
 
-1. Create a feature branch from `main`.
+1. Branch from the current `main` and name the branch `<type>/<slug>`: a
+   Conventional Commits type and a few lowercase words joined by `-`, for
+   example `fix/nul-bytes`.
 2. Make your changes in focused commits whose messages follow the
-   Conventional Commits format described above.
-3. Ensure all checks listed above pass.
+   Conventional Commits format described above; the commit hooks check them.
+3. Ensure all checks listed above pass. Before the merge the branch has to be
+   up to date with `main`: rebase it, or merge `main` into it once review has
+   started.
 4. Open a pull request against `main` with a clear description of what the
-   change does and why.
+   change does and why. Keep to one change per pull request. Pull requests
+   are squash-merged and the title becomes the commit subject on `main`, so
+   the title is itself a Conventional Commits subject.
+5. If your change needs another pull request that is still in review, open
+   yours against `main` as well, write "Depends on #N" in the body, and
+   rebase it onto `main` after #N merges.
+6. A maintainer reviews the pull request and squash-merges it.
+7. Report a vulnerability as [`SECURITY.md`](SECURITY.md) describes, not in a
+   public issue or pull request.
 
 A maintainer will review your pull request as soon as possible.
 
