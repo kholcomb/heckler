@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A binary format that is mostly text, such as a compiled translation catalog, is read by that rule and can produce findings. Add such files to the `allowlist` where the characters are expected
 - The note on stderr names the files that look binary, up to five of them, instead of counting them, and calls them `not scanned as text`, as `--vet` does in its report. A file that is mostly text is named there as well as scanned, because control characters and stretches of fewer than 32 characters between bytes that are not UTF-8 are not reported from it
 - `--diff-only --all-text` no longer drops a file that a changed Python package installed, without a word, because it looks binary. The file is read by the same rule, and named in the note when it is left out
+- A file that declares an encoding other than UTF-8 can produce findings from that reading, so a run that passed can fail: UTF-8 text under a stale `latin-1` declaration can be reported for the control characters that encoding reads into it, and correcting the declaration ends that. A declared encoding this Python does not know, in a file that is not valid UTF-8, names the file as not scanned (exit code 2 with `--ci`)
 
 ### Removed
 
@@ -34,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A single control byte no longer makes a file shorter than 32 bytes binary
 - `--vet` applies its limits on unpacked size, 50 MB for a file and 500 MB for an archive, to tar archives on every Python version. They were checked on Python 3.11.0 to 3.11.3 only, so a tarball of a few KB could unpack to any size. A member that declares a negative size is refused. So is what those limits do not reach: a sparse member, before its map is read, and the long-name or pax headers in front of one member when they come to more than 1 MB, or to more than 16 headers
 - Every name heckler prints for a person to read has its control and invisible characters spelled out as `<U+XXXX>`, and a tab printed as a space: a file, directory or archive member name, a package name or version, and a lockfile path, in the text report and in every note, warning and error, in a plain scan, `--vet`, `--diff-only` and the pre-commit hooks. JSON and SARIF output is unchanged. Whoever makes a repository, an archive or a package chooses these names, and one could send an escape sequence or a line break to the terminal, to hide a finding or a warning or to add a line heckler did not write
+- A file whose first or second line is a `#` comment declaring a source encoding (`coding: <name>` or `coding=<name>`) is also read in that encoding, in every file heckler reads as text and in a plain scan, `--vet`, `--diff-only` and the pre-commit hooks, and what that reading holds is reported, marked `(read as <NAME>, as declared)`. Such a file was read as UTF-8 only
 
 ## [1.1.0] - 2026-11-11
 

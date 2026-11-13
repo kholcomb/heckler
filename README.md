@@ -225,6 +225,8 @@ Files encoded as UTF-16 or UTF-32 (with BOM) are detected and decoded. A file is
 
 Findings from such a file say which reading they come from, for example `Right-to-Left Override (read as UTF-8)`. A line ends at LF, CRLF or a lone CR, so line numbers match what an editor shows.
 
+A file whose first or second line is a `#` comment that declares its encoding (`coding: <name>` or `coding=<name>`, as in `# -*- coding: <name> -*-`) is also read in that encoding, when that gives other text than UTF-8 does. Findings from that reading are marked, for example `(read as GB18030, as declared)`; on a line that reads the same both ways a character already reported is not reported again, and `heckler-ignore` comments count in it only on such lines. In a file that looks binary that reading leaves out control characters and directives, as the reading of its text runs does. A declared name this Python does not know, in a file that is not valid UTF-8, is named in a warning and counts as not scanned (exit code 2 with `--ci`).
+
 ### Dependency / Supply Chain Coverage
 
 | Capability | Supported Ecosystems |
