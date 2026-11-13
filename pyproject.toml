@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 authors = [{ name = "heckler contributors" }]
 keywords = ["security", "unicode", "glassworm", "trojan-source", "supply-chain"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
