@@ -8,13 +8,15 @@ lines of its text output that are either. Outside it, the output is unchanged.
 
 from __future__ import annotations
 
+import io
+import json
 import os
 import sys
 from pathlib import Path
 
 import pytest
 
-from heckler._output import write_err, write_line
+from heckler._output import write_err, write_line, write_out
 from heckler.characters import Severity, ThreatCategory
 from heckler.cli import main
 from heckler.formatters.text import _BOLD, _RESET, format_text, not_a_command, spell_out
@@ -174,6 +176,66 @@ class TestOutsideActions:
         write_err("::a")
         write_line("##[a")
         assert capsys.readouterr() == ("##[a\n", "::a\n")
+
+
+def _stdout(monkeypatch: pytest.MonkeyPatch, errors: str) -> io.BytesIO:
+    """Put an ASCII byte stream with the error handler *errors* in place of standard output."""
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="ascii", errors=errors, newline="")
+    monkeypatch.setattr(sys, "stdout", stream)
+    return raw
+
+
+def _written(raw: io.BytesIO) -> str:
+    sys.stdout.flush()
+    return raw.getvalue().decode("ascii")
+
+
+ZHE = chr(0x416)  # an ASCII stream cannot take it
+FIRST = f":{ZHE}:x.js"  # with the ZHE dropped, it reads ::x.js
+SECOND = f"ok\n      #{ZHE}#[y"  # with the ZHE dropped, the second line holds ##[
+
+
+class TestAStreamThatDropsCharacters:
+    @pytest.mark.usefixtures("actions")
+    def test_a_dropped_character_does_not_make_a_command(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        raw = _stdout(monkeypatch, "ignore")
+        write_line(FIRST)
+        out = _written(raw)
+        assert not out.startswith("::")
+        assert out == ":\\u0416:x.js\n"
+
+    @pytest.mark.usefixtures("actions")
+    def test_a_dropped_character_does_not_make_the_old_form(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        raw = _stdout(monkeypatch, "ignore")
+        write_out(SECOND)
+        out = _written(raw)
+        assert not any("##[" in line for line in out.split("\n"))
+        assert out == "ok\n      #\\u0416#[y\n"
+
+    @pytest.mark.usefixtures("terminal")
+    def test_outside_actions_the_character_is_dropped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        raw = _stdout(monkeypatch, "ignore")
+        write_line(FIRST)
+        assert _written(raw) == "::x.js\n"
+
+    @pytest.mark.usefixtures("actions")
+    def test_a_json_document_is_written_as_before(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        raw = _stdout(monkeypatch, "ignore")
+        write_out(json.dumps({"file": ZHE}, ensure_ascii=False), json_document=True)
+        assert _written(raw) == '{"file": ""}\n'
+
+    @pytest.mark.usefixtures("actions")
+    def test_a_replacing_stream_is_written_as_before(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        raw = _stdout(monkeypatch, "replace")
+        write_line(FIRST)
+        assert _written(raw) == ":?:x.js\n"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="on NTFS a colon in a name names a stream")

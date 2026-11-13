@@ -19,14 +19,25 @@ def write_out(text: str, *, json_document: bool = False) -> None:
     the ones the stream cannot take as backslash escapes otherwise. A stream
     that reports no encoding or no handler, or one Python has no codec or
     handler for, is written to as it is.
+
+    One case is probed differently. A stream whose handler is ``ignore`` never
+    raises, and ``print()`` would drop the characters it cannot take after
+    ``not_a_command()`` has checked the line, so that a line that was not a
+    command could be written as one. Under GitHub Actions, for text that is
+    not a JSON document, such a stream is probed with ``strict``, and what it
+    cannot take is written as backslash escapes. Anywhere else it is written
+    to as it is.
     """
     encoding: str | None = getattr(sys.stdout, "encoding", None)
     errors: str | None = getattr(sys.stdout, "errors", None)
     if encoding is None or errors is None:
         print(text)
         return
+    probe = errors
+    if errors == "ignore" and not json_document and in_github_actions():
+        probe = "strict"
     try:
-        text.encode(encoding, errors)
+        text.encode(encoding, probe)
     except LookupError:
         print(text)
         return
