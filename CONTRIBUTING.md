@@ -40,14 +40,17 @@ basics of setting up a development environment and submitting changes.
   review the change, `git add` it, and commit again. A commit that touches
   `src/` is also type checked, by mypy and by Pyright, both in strict mode
   and both over the whole of `src/`. A staged workflow, `action.yml` or
-  pre-commit file is checked by zizmor, offline.
+  pre-commit file is checked by zizmor, offline. Every staged file is
+  scanned by heckler: the `heckler` hook of a release, not the code in the
+  working tree, so that a change cannot alter the scanner that reads it.
 - **On the commit message**, the subject line must follow
   [Conventional Commits](https://www.conventionalcommits.org/):
   `type(optional scope): description`, where the type is one of `build`,
   `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`
   or `test`. For example: `fix(scanner): scan past NUL bytes`.
 
-To run the lint, format, type check and workflow hooks over the whole tree:
+To run the lint, format, type check, workflow and heckler hooks over the
+whole tree:
 
 ```bash
 pre-commit run --all-files
