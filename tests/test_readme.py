@@ -7,6 +7,7 @@ README holds any of the characters it is about.
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import Path
 
 import pytest
@@ -122,3 +123,24 @@ class TestCliReference:
         ]
         assert len(options) > 10
         assert [option for option in options if f"`{option}" not in section] == []
+
+
+class TestPreCommit:
+    SECTION = _section("### Pre-commit", "### Dependency Scanning Workflow")
+
+    def test_options_go_in_entry_not_args(self) -> None:
+        assert "args: [" not in self.SECTION
+        assert re.search(r"^\s*args:", self.SECTION, re.MULTILINE) is None
+
+    def test_every_entry_shown_keeps_the_hook_and_ends_with_end_of_options(self) -> None:
+        manifest = (REPO_ROOT / ".pre-commit-hooks.yaml").read_text(encoding="utf-8")
+        shipped = [
+            shlex.split(e)[:-1] for e in re.findall(r"^  entry: (.+)$", manifest, re.MULTILINE)
+        ]
+        shown = re.findall(r"entry: ([^`\n]+)", self.SECTION)
+        assert len(shown) >= 2
+        for entry in shown:
+            tokens = shlex.split(entry.split("#")[0])
+            assert tokens[-1] == "--", entry
+            assert tokens.count("--") == 1, entry
+            assert any(tokens[: len(s)] == s for s in shipped), entry
