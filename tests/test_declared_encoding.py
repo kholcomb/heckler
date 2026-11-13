@@ -244,8 +244,12 @@ class TestDirectivesInTheDeclaredReading:
         directive = (
             b"+"
             + base64.b64encode("#".encode("utf-16-be")).rstrip(b"=")
-            + b"- heckler-ignore-next-line U+202E\n"
+            + b"- heckler-ignore-next-line U+-202E\n"
         )
+        # The fixture itself: UTF-7 reads "+-" as a plus sign, so the line is a
+        # directive there, and it is not one as UTF-8.
+        assert directive.decode("utf-7") == "# heckler-ignore-next-line U+202E\n"
+        assert not directive.decode("utf-8").startswith("#")
         raw = _declaring("utf-7", "") + directive + BODY.format(RLO).encode("utf-7")
         names = _names(_write(tmp_path, raw))
         assert f"Right-to-Left Override {_label('utf-7')}" in names
