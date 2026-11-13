@@ -15,7 +15,7 @@ It is a zero-dependency package: standard library only, Python 3.11+. `config.py
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pre-commit install                      # lint, format and type checks on commit, Conventional Commits on the message
+pre-commit install                      # lint, format, type and workflow checks on commit, Conventional Commits on the message
 
 pytest                                  # whole suite, a few seconds
 pytest tests/test_scanner.py::TestScanPath::test_skip_dirs   # one test
@@ -26,7 +26,7 @@ ruff check src/ tests/
 ruff format --check src/ tests/         # drop --check to rewrite
 mypy src/                               # strict
 pyright                                 # strict, src/ only ([tool.pyright] in pyproject.toml)
-zizmor --offline .                      # after a change to a workflow or to action.yml
+zizmor --offline .                      # after a change to a workflow or to action.yml; the commit hook runs it on those files
 python -m heckler --ci --severity low . # self-scan: the tree must hold none of the characters
 ```
 

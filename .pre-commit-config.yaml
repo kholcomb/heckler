@@ -34,6 +34,17 @@ repos:
         pass_filenames: false
         files: ^src/
 
+  # The workflows, action.yml and the two pre-commit files, when one of them
+  # is staged: the files that `zizmor --offline .` reads in CI.
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: v1.32.0
+    hooks:
+      - id: zizmor
+        # In place of the hook's own arguments, so --no-progress is repeated.
+        # Offline: zizmor would otherwise take a token from GH_TOKEN or
+        # GITHUB_TOKEN in the shell and ask GitHub about each action.
+        args: [--offline, --no-progress]
+
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.5.0
     hooks:

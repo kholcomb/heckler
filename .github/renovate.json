@@ -36,6 +36,12 @@
       "minimumReleaseAge": "3 days"
     },
     {
+      "description": "zizmor runs from the dev extra in CI and from the commit hook. One pull request moves both, so the two never disagree about a workflow.",
+      "matchPackageNames": ["zizmor", "zizmorcore/zizmor-pre-commit"],
+      "groupName": "zizmor",
+      "minimumReleaseAge": "3 days"
+    },
+    {
       "description": "Say what a failing check means on a regex update.",
       "matchManagers": ["pep621"],
       "matchPackageNames": ["regex"],

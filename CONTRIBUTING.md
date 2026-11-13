@@ -39,14 +39,15 @@ basics of setting up a development environment and submitting changes.
   formatted with `ruff format`. If a hook changes a file the commit stops;
   review the change, `git add` it, and commit again. A commit that touches
   `src/` is also type checked, by mypy and by Pyright, both in strict mode
-  and both over the whole of `src/`.
+  and both over the whole of `src/`. A staged workflow, `action.yml` or
+  pre-commit file is checked by zizmor, offline.
 - **On the commit message**, the subject line must follow
   [Conventional Commits](https://www.conventionalcommits.org/):
   `type(optional scope): description`, where the type is one of `build`,
   `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`
   or `test`. For example: `fix(scanner): scan past NUL bytes`.
 
-To run the lint, format and type check hooks over the whole tree:
+To run the lint, format, type check and workflow hooks over the whole tree:
 
 ```bash
 pre-commit run --all-files
@@ -87,7 +88,8 @@ mypy src/
 pyright
 ```
 
-**Workflows**, after a change to a workflow or to `action.yml`:
+**Workflows**, after a change to a workflow or to `action.yml`. The commit
+hook runs the same check on those files when one is staged:
 
 ```bash
 zizmor --offline .
