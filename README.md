@@ -281,7 +281,16 @@ repos:
 
 The source hook is handed every staged file and leaves out those whose content is not text.
 
-The lockfile hook scans installed packages, so install dependencies before committing a lockfile change. If a changed package is not installed, the hook fails and names it; add `args: [--allow-unscanned]` to the hook to accept that instead.
+Both hooks end their entry with `--`, so every name pre-commit hands them is read as a file, including one that starts with `-`. To give a hook an option, override its `entry:`: copy the hook's own entry and add the option before the `--`, as below. An `entry:` in your configuration replaces the hook's own, so it has to keep the hook's options and end with `--` itself. `args:` does not work for these hooks: pre-commit puts it after the entry, where heckler takes it for file names.
+
+```yaml
+      - id: heckler
+        entry: heckler --ci --skip-binary --no-suppress --
+      - id: heckler-lockfile
+        entry: heckler --ci --scan-deps --diff-only --allow-unscanned --
+```
+
+The lockfile hook scans installed packages, so install dependencies before committing a lockfile change. If a changed package is not installed, the hook fails and names it; to accept that instead, add `--allow-unscanned` before the `--` of its entry, as above.
 
 ### Dependency Scanning Workflow
 
