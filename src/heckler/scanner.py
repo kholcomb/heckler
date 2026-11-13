@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import codecs
 import functools
 import os
 import re
 import stat
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -313,6 +315,96 @@ _ENCODING_LABELS = {
     "utf-32-le": "UTF-32 LE",
     "utf-32-be": "UTF-32 BE",
 }
+
+# A declaration of the source encoding, as Python's tokenizer finds it
+# (PEP 263): a comment on line 1 or 2. Matched on bytes, so what surrounds it
+# need not be valid in any encoding.
+_DECLARATION_RE = re.compile(rb"^[ \t\f]*#.*?coding[:=][ \t]*([-\w.]+)")
+_LINE_BREAK_BYTES_RE = re.compile(rb"\r\n|\r|\n")
+
+# What a declaration is written in. A codec that does not read these bytes
+# as themselves cannot have been the one it was read in, and Python refuses
+# such a file as source.
+_DECLARATION_BYTES = b"# -*- coding= : x-y_z.0 -*-\t\f\r\n"
+
+
+def _first_lines(raw: bytes, count: int = 2) -> list[tuple[bytes, int]]:
+    """The first *count* lines of *raw*, each with where it ends, its line break included."""
+    lines: list[tuple[bytes, int]] = []
+    start = 0
+    for brk in _LINE_BREAK_BYTES_RE.finditer(raw):
+        lines.append((raw[start : brk.start()], brk.end()))
+        start = brk.end()
+        if len(lines) == count:
+            return lines
+    return [*lines, (raw[start:], len(raw))][:count]
+
+
+def _normal_name(name: str) -> str:
+    """*name* as Python's tokenizer normalises it before it looks the codec up."""
+    enc = name[:12].lower().replace("_", "-")
+    if enc == "utf-8" or enc.startswith("utf-8-"):
+        return "utf-8"
+    latin = ("latin-1", "iso-8859-1", "iso-latin-1")
+    if enc in latin or enc.startswith(tuple(f"{n}-" for n in latin)):
+        return "iso-8859-1"
+    return name
+
+
+@functools.lru_cache(maxsize=64)
+def _source_codec(name: str) -> str | None:
+    """The codec a file that declares *name* is read in as well, or None for no other reading.
+
+    Raises LookupError for a name this Python does not know.
+    """
+    codec = codecs.lookup(_normal_name(name)).name
+    if codec in ("utf-8", "utf-8-sig"):
+        return None
+    try:
+        same = _DECLARATION_BYTES.decode(codec, errors="replace") == _DECLARATION_BYTES.decode(
+            "ascii"
+        )
+    except (LookupError, UnicodeError):  # not a text encoding, or no lenient decoding
+        return None
+    return codec if same else None
+
+
+def _declared_codecs(raw: bytes) -> tuple[dict[str, list[int]], list[str]]:
+    """The codecs the first two lines of *raw* declare, and the names this Python does not know.
+
+    Each codec comes with where each line that declares it ends in *raw*.
+    """
+    known: dict[str, list[int]] = {}
+    unknown: list[str] = []
+    text = raw.removeprefix(codecs.BOM_UTF8)
+    for line, end in _first_lines(text):
+        match = _DECLARATION_RE.match(line)
+        if not match:
+            continue
+        name = match.group(1).decode("ascii")
+        try:
+            codec = _source_codec(name)
+        except LookupError:
+            unknown.append(name)
+            continue
+        if codec:
+            known.setdefault(codec, []).append(len(raw) - len(text) + end)
+    return known, unknown
+
+
+def _same_lines(first: str, other: str) -> frozenset[int]:
+    """The numbers of the lines that read the same in two readings of a file."""
+    pairs = zip(_LINE_BREAK_RE.split(first), _LINE_BREAK_RE.split(other), strict=False)
+    return frozenset(n for n, (a, b) in enumerate(pairs, 1) if a == b)
+
+
+def _is_valid_utf8(raw: bytes) -> bool:
+    try:
+        raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
 
 _NOTHING: frozenset[int] = frozenset()
 
@@ -649,13 +741,32 @@ class Scanner:
         return self._scan_text(text, filename)
 
     def _scan_text(
-        self, text: str, filename: str, *, controls: bool = True, directives: bool = True
+        self,
+        text: str,
+        filename: str,
+        *,
+        controls: bool = True,
+        directives: bool = True,
+        record: set[tuple[int, int]] | None = None,
+        already: AbstractSet[tuple[int, int]] = frozenset(),
+        trusted: frozenset[int] | None = None,
     ) -> list[Finding]:
         """scan_text() for one reading of a file.
 
         Without *controls*, control characters are not reported, which
         leaves U+00A0 and up. Without *directives*, no suppression directive
         is honoured, whatever the scanner is set to.
+
+        *record* gains the ``(line, code point)`` of what is reported or
+        suppressed, and *already* holds such pairs from an earlier reading.
+        *trusted* is the set of lines that read the same in that reading.
+        It governs three uses of the earlier one. A directive counts only
+        on such a line (None is every line). A next-line directive covers a
+        next line that is not such a line only for the code points it
+        lists, so one without a list covers nothing there. And a pair in
+        *already* is skipped, before a suppression is counted, only on such
+        a line (None is none). A line that reads differently is not the
+        same line, whatever its number.
         """
         findings: list[Finding] = []
         source, package = self._classify_path(filename)
@@ -681,6 +792,10 @@ class Scanner:
         def report(col: int, cp: int, info: CharInfo) -> None:
             if not info.severity >= self.severity_threshold:
                 return
+            if trusted is not None and line_num in trusted and (line_num, cp) in already:
+                return  # the first reading reported it on this line, which reads the same
+            if record is not None:
+                record.add((line_num, cp))
             if cp in listed or (bare and info.severity <= _BARE_DIRECTIVE_MAX):
                 self.suppressed[filename] = self.suppressed.get(filename, 0) + 1
                 return
@@ -702,7 +817,9 @@ class Scanner:
         for line_num, line in enumerate(_LINE_BREAK_RE.split(text), 1):
             bare, listed = next_bare, next_listed
             next_bare, next_listed = False, _NOTHING
-            if honor:
+            if trusted is not None and line_num not in trusted:
+                bare = False  # on a line that reads differently, only what is listed
+            if honor and (trusted is None or line_num in trusted):
                 directive = _IGNORE_NEXT_LINE_RE.match(line)
                 if directive:
                     # Covers the next line. This one is scanned like any other.
@@ -820,7 +937,9 @@ class Scanner:
         # would let a single byte hide everything that follows it. Whether a
         # file is worth scanning at all is decided by the caller.
         bom_codec = _detect_bom_encoding(raw)
-        findings = self.scan_text(raw.decode(bom_codec or "utf-8", errors="replace"), name)
+        text = raw.decode(bom_codec or "utf-8", errors="replace")
+        first: set[tuple[int, int]] = set()
+        findings = self._scan_text(text, name, record=first)
 
         # The encoding a file announces is not always the one it is in: a
         # BOM in front of UTF-8 text, or UTF-16 text with no BOM. Scan the
@@ -845,6 +964,62 @@ class Scanner:
             reading = self._scan_text(decoded, name, controls=controls)
             _label_reading(reading, _read_as(codec))
             findings.extend(reading)
+        findings.extend(self._declared_readings(raw, name, text, first))
+        return findings
+
+    def _declared_readings(
+        self,
+        raw: bytes,
+        name: str,
+        first_text: str | None,
+        first: AbstractSet[tuple[int, int]],
+        *,
+        looks_binary: bool = False,
+    ) -> list[Finding]:
+        """The file read in each encoding its first two lines declare, less the first reading.
+
+        Each encoding is read two ways. The file is decoded from its first
+        byte, as it is when it is imported. And it is kept as it is up to the
+        end of each line that declares the encoding, with what follows
+        decoded afresh, as some versions of Python read a file they run:
+        what the declaring line leaves pending in the decoder (an escape it
+        opens, a shift it makes) then does not reach the lines after it.
+        The second way is scanned when it gives text of its own, and a
+        finding the first way made at the same place is not repeated.
+        """
+        declared, unknown = _declared_codecs(raw)
+        if unknown and not _is_valid_utf8(raw):
+            for label in unknown:
+                reason = f"it declares an encoding this Python does not know ({label})"
+                self.skipped.append((name, reason))
+        findings: list[Finding] = []
+        for codec, ends in declared.items():
+            if first_text is None:
+                first_text = raw.decode("utf-8", errors="replace")
+            texts = [raw.decode(codec, errors="replace")]
+            for end in ends:
+                kept = raw[:end].decode("utf-8", errors="replace")
+                texts.append(kept + raw[end:].decode(codec, errors="replace"))
+            seen = {first_text}
+            whole: set[tuple[int, int, int]] = set()
+            for i, text in enumerate(texts):
+                if text in seen:
+                    continue
+                seen.add(text)
+                reading = self._scan_text(
+                    text,
+                    name,
+                    controls=not looks_binary,
+                    directives=not looks_binary,
+                    already=first,
+                    trusted=None if looks_binary else _same_lines(first_text, text),
+                )
+                if i == 0:
+                    whole = {(f.line, f.column, f.codepoint) for f in reading}
+                else:
+                    reading = [f for f in reading if (f.line, f.column, f.codepoint) not in whole]
+                _label_reading(reading, f"read as {codec.upper()}, as declared")
+                findings.extend(reading)
         return findings
 
     def _scan_text_inside(self, filepath: Path) -> list[Finding]:
@@ -867,6 +1042,10 @@ class Scanner:
         reading reports neither, so a file it found nothing in has still not
         been scanned as text is.
 
+        A declared encoding is read in full whatever share of the file is
+        junk, without control characters and directives, and the file is
+        still named.
+
         A file too large to read is left out as binary too. It is recorded
         in ``binary`` and not in ``skipped``, so the large media files of a
         repository do not fail a run.
@@ -875,6 +1054,14 @@ class Scanner:
         if raw is None:
             return []
         self.binary.append(str(filepath))
+        findings = self._text_runs(raw, str(filepath))
+        findings.extend(
+            self._declared_readings(raw, str(filepath), None, frozenset(), looks_binary=True)
+        )
+        return findings
+
+    def _text_runs(self, raw: bytes, name: str) -> list[Finding]:
+        """Scan the runs of text in a file whose start looks binary."""
         if not _is_utf8_text(raw, _MOSTLY_TEXT_RATIO):
             return []
         # Everything that is reported from this reading is U+00A0 or above,
@@ -884,7 +1071,7 @@ class Scanner:
         text = _text_inside(raw.decode("utf-8", errors="replace"))
         if text is None:
             return []
-        findings = self._scan_text(text, str(filepath), controls=False, directives=False)
+        findings = self._scan_text(text, name, controls=False, directives=False)
         _label_reading(findings, _LOOKS_BINARY)
         return findings
 
