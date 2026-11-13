@@ -123,7 +123,7 @@ jobs:
               (repo / name).write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
           EOF
           git -C "$repo" add -A
-          cd "$repo"
+          cd "$repo" || exit 1
           for hook in heckler heckler-lockfile; do
             if env -u GITHUB_ACTIONS PRE_COMMIT_NO_CONCURRENCY=1 pre-commit try-repo "$GITHUB_WORKSPACE" "$hook"; then
               echo "::error::The $hook hook passed beside a staged name that starts with a dash."
