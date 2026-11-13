@@ -45,6 +45,19 @@ repos:
         # GITHUB_TOKEN in the shell and ask GitHub about each action.
         args: [--offline, --no-progress]
 
+  # heckler on every staged file, as the hook it ships, from a release. The
+  # copy that reads a staged file is then a released one, not the working
+  # tree, which the change being committed can alter. CI's self-scan still
+  # runs from the working tree.
+  - repo: https://github.com/kholcomb/heckler
+    rev: v2.0.0
+    hooks:
+      - id: heckler
+        # The hook's own entry, run as `python -I -m heckler`: in isolated
+        # mode Python leaves out PYTHONPATH and the current directory, so a
+        # heckler package named there cannot take the place of the release.
+        entry: python -I -m heckler --ci --skip-binary --
+
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.5.0
     hooks:

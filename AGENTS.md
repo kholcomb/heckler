@@ -15,7 +15,7 @@ It is a zero-dependency package: standard library only, Python 3.11+. `config.py
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pre-commit install                      # lint, format, type and workflow checks on commit, Conventional Commits on the message
+pre-commit install                      # lint, format, type and workflow checks and a heckler scan on commit, Conventional Commits on the message
 
 pytest                                  # whole suite, a few seconds
 pytest tests/test_scanner.py::TestScanPath::test_skip_dirs   # one test
@@ -31,6 +31,8 @@ python -m heckler --ci --severity low . # self-scan: the tree must hold none of 
 ```
 
 CI (`.github/workflows/ci.yml`) runs lint, format, tests and the self-scan on Python 3.11 to 3.14 on Linux and on 3.12 on Windows and macOS, and mypy and Pyright once. It also runs the hooks in `.pre-commit-config.yaml`, and then the shipped `heckler` hook and the action in `action.yml`: each on the tree, which has to pass, and on a file with a character planted at run time, which has to fail. Both shipped hooks also run on staged files in a scratch repository, where a name that starts with `-` sits beside a planted character or an uninstalled package, and both have to fail. The action's scan of the tree is uploaded to code scanning, which the ruleset on `main` requires; that job alone has `security-events: write`. It builds the package and installs the wheel with no index, so that a runtime dependency fails there, and it lints the workflows with actionlint and zizmor. Run the self-scan as `python -m heckler` from the development environment, so that it is the working tree that runs.
+
+The commit hooks (`.pre-commit-config.yaml`) run heckler as well, on every staged file: the `heckler` hook it ships, at the tag of a release. The copy that reads a staged file is then a released one and not the working tree, which the change being committed can alter. Its entry is the shipped one run as `python -I -m heckler`, so that `PYTHONPATH=src` in the shell or a `heckler` directory beside the files does not put other code in the release's place; when a release changes the shipped entry, this one follows with the `rev:`. The hook does not stand in for the self-scan, which runs the working tree's code over the whole tree.
 
 ## Architecture
 
