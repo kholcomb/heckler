@@ -281,7 +281,7 @@ repos:
 
 The source hook is handed every staged file and leaves out those whose content is not text.
 
-Both hooks end their entry with `--`, so every name pre-commit hands them is read as a file, including one that starts with `-`. To give a hook an option, override its `entry:` and keep `--` as the last word. `args:` does not work for these hooks: pre-commit puts it after the entry, where heckler takes it for file names.
+Both hooks end their entry with `--`, so every name pre-commit hands them is read as a file, including one that starts with `-`. To give a hook an option, override its `entry:`: copy the hook's own entry and add the option before the `--`, as below. An `entry:` in your configuration replaces the hook's own, so it has to keep the hook's options and end with `--` itself. `args:` does not work for these hooks: pre-commit puts it after the entry, where heckler takes it for file names.
 
 ```yaml
       - id: heckler
