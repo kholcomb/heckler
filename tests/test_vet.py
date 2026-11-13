@@ -9,6 +9,7 @@ import sys
 import tarfile
 import unittest.mock
 import urllib.error
+import urllib.parse
 import warnings
 import zipfile
 from collections.abc import Callable
@@ -553,7 +554,7 @@ def _fake_pypi(
     def fake_urlopen(req, **kwargs):  # type: ignore[no-untyped-def]
         url = req.full_url if hasattr(req, "full_url") else req
         resp = unittest.mock.MagicMock()
-        if "pypi.org" in url:
+        if urllib.parse.urlsplit(url).hostname == "pypi.org":
             resp.read.return_value = json.dumps(meta).encode()
         else:
             requested.append(url)
