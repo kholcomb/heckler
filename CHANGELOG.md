@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-13
+
 ### Added
 
 - `Scanner.scan_path(path, by_content=True)` treats a file passed by name as a directory walk does, and leaves it out when its content is binary
@@ -162,5 +164,6 @@ Initial stable release and GitHub Actions Marketplace launch.
 - Harden archive extraction against path traversal
 - Replace npm/pip subprocess calls with direct registry API fetches
 
+[2.0.0]: https://github.com/kholcomb/heckler/releases/tag/v2.0.0
 [1.1.0]: https://github.com/kholcomb/heckler/releases/tag/v1.1.0
 [1.0.0]: https://github.com/kholcomb/heckler/releases/tag/v1.0.0

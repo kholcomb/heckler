@@ -252,7 +252,7 @@ In a requirements file, an exact pin (`name==1.2.3`) is checked against the inst
 Available on the [GitHub Marketplace](https://github.com/marketplace/actions/hecklerdetection). Use as a composite action:
 
 ```yaml
-- uses: kholcomb/heckler@v1.1.0
+- uses: kholcomb/heckler@v2.0.0
   with:
     scan-deps: true
     format: sarif
@@ -275,7 +275,7 @@ Add to `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/kholcomb/heckler
-    rev: v1.1.0
+    rev: v2.0.0
     hooks:
       - id: heckler          # Scan source files
       - id: heckler-lockfile         # Scan changed dependencies on lockfile change
