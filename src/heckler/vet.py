@@ -23,6 +23,7 @@ import zlib
 from pathlib import Path
 from typing import cast
 
+from ._output import write_out
 from .config import Config
 from .formatters import get_formatter
 from .formatters.text import spell_out
@@ -665,26 +666,26 @@ def vet_package(
             verdict = f"0 findings, {len(not_scanned)} file(s) not scanned. INCOMPLETE."
         else:
             verdict = "0 findings. CLEAN."
-        print(f"[VET] {spec} ({registry}) — {files}, {verdict}")
+        write_out(f"[VET] {spec} ({registry}) — {files}, {verdict}")
         if not quiet:
             for name in scanned:
-                print(f"  scanned: {name}")
+                write_out(f"  scanned: {name}")
             for name, _reason in not_scanned:
-                print(f"  not scanned: {name}")
+                write_out(f"  not scanned: {name}")
             # Content decides what is binary, and the package wrote the
             # content. Naming the files lets a reader see what that left out,
             # of a file that was scanned for the text inside it as well.
             for name in binary[:_MAX_BINARY_LISTED]:
-                print(f"  binary, not scanned as text: {name}")
+                write_out(f"  binary, not scanned as text: {name}")
             if len(binary) > _MAX_BINARY_LISTED:
                 more = len(binary) - _MAX_BINARY_LISTED
-                print(f"  binary, not scanned as text: {more} more file(s)")
+                write_out(f"  binary, not scanned as text: {more} more file(s)")
 
     # "Nothing found" would be the wrong thing to say when part of the
     # package was never looked at; the header and warnings tell that story.
     nothing_was_checked = output_format == "text" and not_scanned and not findings
     if output and not nothing_was_checked:
-        print(output)
+        write_out(output, json_document=output_format != "text")
 
     if findings:
         return 1

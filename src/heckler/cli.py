@@ -6,6 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from ._output import write_out
 from ._version import __version__
 from .characters import Severity
 from .config import Config, ConfigError, load_config
@@ -216,7 +217,7 @@ def _finish(
     # that were never looked at; the warnings already tell that story.
     nothing_was_checked = args.format == "text" and unscanned and not findings
     if output and not nothing_was_checked:
-        print(output)
+        write_out(output, json_document=args.format != "text")
 
     if not args.quiet:
         _report_suppressions(scanner)
