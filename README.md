@@ -67,7 +67,7 @@ suspect-project/config.py
 Total: 6 finding(s) across 3 file(s).
 ```
 
-In the text report, the findings on a source line are followed by that line with every invisible character spelled out. Long lines are cut to a window around the finding. The example is the tool's real output for a small fixture; a test fails if the two drift apart.
+In the text report, the findings on a source line are followed by that line with every invisible character spelled out. Names are printed the same way: a file, archive member or package name, in the report and in every note and warning on stderr. Long lines are cut to a window around the finding. The example is the tool's real output for a small fixture; a test fails if the two drift apart.
 
 ## What It Detects
 

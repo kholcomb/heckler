@@ -107,9 +107,9 @@ def format_text(findings: list[Finding], *, color: bool = True, quiet: bool = Fa
 
     for filepath, file_findings in by_file.items():
         if not quiet:
-            header = filepath
+            header = spell_out(filepath)
             if use_color:
-                header = f"{_BOLD}{filepath}{_RESET}"
+                header = f"{_BOLD}{header}{_RESET}"
             lines.append(header)
 
         columns_on_line: list[int] = []
@@ -133,12 +133,12 @@ def format_text(findings: list[Finding], *, color: bool = True, quiet: bool = Fa
                 line_str = f"{loc}  {sev_label}  {detail}"
 
             if f.package:
-                line_str += f"  pkg:{f.package}"
+                line_str += f"  pkg:{spell_out(f.package)}"
 
             lines.append(line_str)
 
             if in_gha:
-                safe_file = _sanitize_annotation_value(f.file)
+                safe_file = _sanitize_annotation_value(spell_out(f.file))
                 safe_name = _sanitize_annotation_value(f.char_name)
                 lines.append(
                     f"::error file={safe_file},line={f.line},col={f.column}"

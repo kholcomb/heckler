@@ -23,7 +23,7 @@ import zlib
 from pathlib import Path
 from typing import cast
 
-from ._output import write_out
+from ._output import write_err, write_line, write_out
 from .config import Config
 from .formatters import get_formatter
 from .formatters.text import spell_out
@@ -79,10 +79,9 @@ def _parse_spec(spec: str, registry: str) -> tuple[str, str | None]:
     for op in (">=", "<=", "~=", "!="):
         if op in spec:
             base = spec.split(op)[0].strip()
-            print(
+            write_err(
                 f"Error: --vet requires an exact version (e.g., {base}==X.Y.Z). "
                 f"Version ranges are not supported with direct registry fetching.",
-                file=sys.stderr,
             )
             sys.exit(2)
     if "==" in spec:
@@ -125,9 +124,8 @@ def _download_file(url: str, dest: Path) -> None:
                 total += len(chunk)
                 if total > _MAX_DOWNLOAD_SIZE:
                     dest.unlink(missing_ok=True)
-                    print(
+                    write_err(
                         f"Error: Download exceeds {_MAX_DOWNLOAD_SIZE // (1024 * 1024)} MB limit.",
-                        file=sys.stderr,
                     )
                     sys.exit(2)
                 f.write(chunk)
@@ -141,12 +139,10 @@ def _verify_checksum(path: Path, algorithm: str, expected: str, label: str) -> N
             h.update(chunk)
     actual = h.hexdigest()
     if actual != expected:
-        print(
-            f"Error: Checksum mismatch for {label}\n"
-            f"  Expected ({algorithm}): {expected}\n"
-            f"  Got:                    {actual}",
-            file=sys.stderr,
-        )
+        # One call to a line: spelling out the message would spell out its line breaks.
+        write_err(f"Error: Checksum mismatch for {label}")
+        write_err(f"  Expected ({algorithm}): {expected}")
+        write_err(f"  Got:                    {actual}")
         sys.exit(2)
 
 
@@ -164,18 +160,18 @@ def _download_npm(name: str, version: str | None, tmpdir: str) -> Path:
     try:
         meta = _fetch_json(url)
     except (urllib.error.URLError, OSError) as e:
-        print(f"Error: Failed to fetch npm registry metadata: {e}", file=sys.stderr)
+        write_err(f"Error: Failed to fetch npm registry metadata: {e}")
         sys.exit(2)
 
     if not meta:
         label = f"{name}@{version}" if version else name
-        print(f'Error: Package "{label}" not found in npm registry.', file=sys.stderr)
+        write_err(f'Error: Package "{label}" not found in npm registry.')
         sys.exit(2)
 
     dist = _json_object(meta.get("dist"))
     tarball_url = dist.get("tarball")
     if not tarball_url or not isinstance(tarball_url, str):
-        print(f'Error: No tarball URL found for "{name}".', file=sys.stderr)
+        write_err(f'Error: No tarball URL found for "{name}".')
         sys.exit(2)
 
     # Extract expected checksum from registry metadata
@@ -187,7 +183,7 @@ def _download_npm(name: str, version: str | None, tmpdir: str) -> Path:
     try:
         _download_file(tarball_url, dest)
     except (urllib.error.URLError, OSError) as e:
-        print(f"Error: Failed to download npm package: {e}", file=sys.stderr)
+        write_err(f"Error: Failed to download npm package: {e}")
         sys.exit(2)
 
     if isinstance(expected_shasum, str):
@@ -228,17 +224,17 @@ def _download_pypi(
     try:
         meta = _fetch_json(url)
     except (urllib.error.URLError, OSError) as e:
-        print(f"Error: Failed to fetch PyPI metadata: {e}", file=sys.stderr)
+        write_err(f"Error: Failed to fetch PyPI metadata: {e}")
         sys.exit(2)
 
     if not meta:
         label = f"{name}=={version}" if version else name
-        print(f'Error: Package "{label}" not found on PyPI.', file=sys.stderr)
+        write_err(f'Error: Package "{label}" not found on PyPI.')
         sys.exit(2)
 
     urls = meta.get("urls")
     if not isinstance(urls, list) or not urls:
-        print(f'Error: No downloads available for "{name}".', file=sys.stderr)
+        write_err(f'Error: No downloads available for "{name}".')
         sys.exit(2)
 
     # (not an sdist, filename, url, sha256): sorts the sdist first.
@@ -255,7 +251,7 @@ def _download_pypi(
             or "\\" in filename
             or filename in ("", ".", "..")
         ):
-            print(f'Error: Malformed download metadata for "{name}".', file=sys.stderr)
+            write_err(f'Error: Malformed download metadata for "{name}".')
             sys.exit(2)
         sha256 = _json_object(entry.get("digests")).get("sha256")
         files.append((entry.get("packagetype") != "sdist", filename, download_url, sha256))
@@ -272,7 +268,7 @@ def _download_pypi(
         try:
             _download_file(download_url, dest)
         except (urllib.error.URLError, OSError) as e:
-            print(f"Error: Failed to download {filename}: {e}", file=sys.stderr)
+            write_err(f"Error: Failed to download {filename}: {e}")
             sys.exit(2)
 
         if isinstance(sha256, str):
@@ -332,7 +328,7 @@ def extract_package(archive_path: Path, tmpdir: str) -> Path:
     try:
         return _unpack(archive_path, tmpdir)
     except _ARCHIVE_ERRORS as e:
-        print(f"Error: Failed to extract package archive: {e}", file=sys.stderr)
+        write_err(f"Error: Failed to extract package archive: {e}")
         sys.exit(2)
 
 
@@ -594,15 +590,14 @@ def vet_package(
     """
     registry = registry_override or detect_registry(spec)
     if registry == "unknown":
-        print(
+        write_err(
             f'Error: Cannot determine registry for "{spec}". '
             f"Use --registry npm or --registry pypi.",
-            file=sys.stderr,
         )
         return 2
 
     # Warn about public-only registry support
-    print(_PRIVATE_REGISTRY_WARNING, file=sys.stderr)
+    write_err(_PRIVATE_REGISTRY_WARNING)
 
     findings: list[Finding] = []
     scanned: list[str] = []
@@ -647,7 +642,7 @@ def vet_package(
             )
 
     for name, reason in not_scanned:
-        print(f"Warning: {name} was not scanned: {reason}", file=sys.stderr)
+        write_err(f"Warning: {name} was not scanned: {reason}")
 
     formatter = get_formatter(output_format)
     output = formatter(findings, color=color, quiet=quiet)
@@ -666,20 +661,20 @@ def vet_package(
             verdict = f"0 findings, {len(not_scanned)} file(s) not scanned. INCOMPLETE."
         else:
             verdict = "0 findings. CLEAN."
-        write_out(f"[VET] {spec} ({registry}) — {files}, {verdict}")
+        write_line(f"[VET] {spec} ({registry}) — {files}, {verdict}")
         if not quiet:
             for name in scanned:
-                write_out(f"  scanned: {name}")
+                write_line(f"  scanned: {name}")
             for name, _reason in not_scanned:
-                write_out(f"  not scanned: {name}")
+                write_line(f"  not scanned: {name}")
             # Content decides what is binary, and the package wrote the
             # content. Naming the files lets a reader see what that left out,
             # of a file that was scanned for the text inside it as well.
             for name in binary[:_MAX_BINARY_LISTED]:
-                write_out(f"  binary, not scanned as text: {name}")
+                write_line(f"  binary, not scanned as text: {name}")
             if len(binary) > _MAX_BINARY_LISTED:
                 more = len(binary) - _MAX_BINARY_LISTED
-                write_out(f"  binary, not scanned as text: {more} more file(s)")
+                write_line(f"  binary, not scanned as text: {more} more file(s)")
 
     # "Nothing found" would be the wrong thing to say when part of the
     # package was never looked at; the header and warnings tell that story.
@@ -690,10 +685,9 @@ def vet_package(
     if findings:
         return 1
     if not_scanned and not allow_unscanned:
-        print(
+        write_err(
             f"Error: {len(not_scanned)} file(s) of {spec} could not be scanned (see the"
             " warnings above). Pass --allow-unscanned to accept this.",
-            file=sys.stderr,
         )
         return 2
     return 0

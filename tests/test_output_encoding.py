@@ -185,17 +185,46 @@ class TestCommandLine:
             assert json.loads(result.stdout.decode("utf-8")) == json.loads(reference.stdout)
 
 
-def test_only_write_out_prints_to_standard_output() -> None:
+def _calls(package: Path) -> list[tuple[str, str, ast.Call]]:
+    """(file, enclosing function, call) for every call in the package but _output.py."""
+    found: list[tuple[str, str, ast.Call]] = []
+    for path in sorted(package.rglob("*.py")):
+        if path.name == "_output.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+            found += [
+                (path.name, function.name, n) for n in ast.walk(function) if isinstance(n, ast.Call)
+            ]
+    return found
+
+
+def _writes_to_a_stream(call: ast.Call) -> bool:
+    f = call.func
+    return (isinstance(f, ast.Name) and f.id == "print") or (
+        isinstance(f, ast.Attribute)
+        and f.attr == "write"
+        and isinstance(f.value, ast.Attribute)
+        and f.value.attr in ("stdout", "stderr")
+    )
+
+
+def test_only_the_output_module_writes_to_a_stream() -> None:
     package = Path(heckler.__file__).parent
-    files = [path for path in sorted(package.rglob("*.py")) if path.name != "_output.py"]
-    assert files
-    offenders = [
-        f"{path.relative_to(package)}:{node.lineno}"
-        for path in files
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "print"
-        and not any(keyword.arg == "file" for keyword in node.keywords)
-    ]
+    offenders = [f"{file}:{c.lineno}" for file, _, c in _calls(package) if _writes_to_a_stream(c)]
     assert offenders == []
+
+
+def test_write_out_is_given_a_formatters_document_only() -> None:
+    """Anything else goes through write_line(), which spells names out."""
+    package = Path(heckler.__file__).parent
+    sites = [
+        (file, function, call)
+        for file, function, call in _calls(package)
+        if isinstance(call.func, ast.Name) and call.func.id == "write_out"
+    ]
+    assert {(file, function) for file, function, _ in sites} == {
+        ("cli.py", "_finish"),
+        ("vet.py", "vet_package"),
+    }
+    assert all(isinstance(c.args[0], ast.Name) and c.args[0].id == "output" for _, _, c in sites)

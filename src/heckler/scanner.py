@@ -6,10 +6,10 @@ import functools
 import os
 import re
 import stat
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ._output import write_err
 from .characters import (
     DANGEROUS_NON_CONTROL_RE,
     DANGEROUS_UNICODE_RE,
@@ -792,10 +792,9 @@ class Scanner:
 
     @staticmethod
     def _stopped_early(findings: list[Finding], filename: str) -> list[Finding]:
-        print(
+        write_err(
             f"Warning: {filename}: stopped after {_MAX_FINDINGS_PER_FILE}"
             " findings; the rest of the file was not scanned.",
-            file=sys.stderr,
         )
         return findings
 
