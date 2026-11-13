@@ -11,9 +11,19 @@ if TYPE_CHECKING:
 from ..characters import DANGEROUS_UNICODE_RE, Severity
 
 
-def _sanitize_annotation_value(value: str) -> str:
-    """Escape characters that have special meaning in GitHub Actions annotations."""
-    return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A").replace(",", "%2C")
+def _escape_data(value: str) -> str:
+    """*value* as the message of a workflow command, escaped as actions/toolkit escapes one."""
+    return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _escape_property(value: str) -> str:
+    """*value* as a property of a workflow command, escaped as actions/toolkit escapes one."""
+    return _escape_data(value).replace(":", "%3A").replace(",", "%2C")
+
+
+def in_github_actions() -> bool:
+    """Whether the GitHub Actions runner reads this output for workflow commands."""
+    return os.environ.get("GITHUB_ACTIONS") == "true"
 
 
 _SEVERITY_COLORS = {
@@ -54,6 +64,22 @@ def spell_out(text: str) -> str:
     return "".join(_spell_out(ch) for ch in text)
 
 
+def not_a_command(line: str) -> str:
+    """*line*, written so that the GitHub Actions runner does not read it as a command.
+
+    The runner reads a line that starts with ``::``, once leading whitespace is
+    trimmed, as a workflow command, and has an older form that starts with
+    ``##[``. The first ``:`` of a leading ``::`` is written as ``<U+003A>``, and
+    the first ``#`` of every ``##[`` as ``<U+0023>``. *line* has been through
+    ``spell_out()``, so it holds no line break and no whitespace but spaces.
+    """
+    line = line.replace("##[", "<U+0023>#[")
+    rest = line.lstrip()
+    if rest.startswith("::"):
+        line = line[: len(line) - len(rest)] + "<U+003A>" + rest[1:]
+    return line
+
+
 def _excerpt(line: str, columns: list[int]) -> str:
     """The part of *line* around the findings at *columns* (1-based).
 
@@ -78,7 +104,9 @@ def format_text(findings: list[Finding], *, color: bool = True, quiet: bool = Fa
         return "No dangerous invisible Unicode characters found."
 
     use_color = color and _supports_color()
+    in_gha = in_github_actions()
     lines: list[str] = []
+    ours: set[int] = set()  # where in lines heckler's own ::error lines are
 
     # Group by file
     by_file: dict[str, list[Finding]] = {}
@@ -102,12 +130,11 @@ def format_text(findings: list[Finding], *, color: bool = True, quiet: bool = Fa
         lines.append(f"Found {len(findings)} dangerous character(s): {', '.join(summary_parts)}")
         lines.append("")
 
-    # GitHub Actions annotations
-    in_gha = os.environ.get("GITHUB_ACTIONS") == "true"
-
     for filepath, file_findings in by_file.items():
         if not quiet:
             header = spell_out(filepath)
+            if in_gha:
+                header = not_a_command(header)  # before the colour code goes in front
             if use_color:
                 header = f"{_BOLD}{header}{_RESET}"
             lines.append(header)
@@ -138,12 +165,10 @@ def format_text(findings: list[Finding], *, color: bool = True, quiet: bool = Fa
             lines.append(line_str)
 
             if in_gha:
-                safe_file = _sanitize_annotation_value(spell_out(f.file))
-                safe_name = _sanitize_annotation_value(f.char_name)
-                lines.append(
-                    f"::error file={safe_file},line={f.line},col={f.column}"
-                    f"::{sev_label}: {f.codepoint_hex} ({safe_name}){tag}"
-                )
+                safe_file = _escape_property(spell_out(f.file))
+                message = _escape_data(f"{sev_label}: {f.codepoint_hex} ({f.char_name}){tag}")
+                ours.add(len(lines))
+                lines.append(f"::error file={safe_file},line={f.line},col={f.column}::{message}")
 
             # After the last finding on a source line, show that line once.
             columns_on_line.append(f.column)
@@ -159,6 +184,8 @@ def format_text(findings: list[Finding], *, color: bool = True, quiet: bool = Fa
         n_files = len(by_file)
         lines.append(f"Total: {len(findings)} finding(s) across {n_files} file(s).")
 
+    if in_gha:
+        lines = [ln if i in ours else not_a_command(ln) for i, ln in enumerate(lines)]
     return "\n".join(lines)
 
 
