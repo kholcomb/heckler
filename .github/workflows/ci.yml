@@ -103,6 +103,34 @@ jobs:
             exit 1
           fi
 
+      # Both entries end with --, so a staged name that starts with "-" is a
+      # file to scan. One batch (PRE_COMMIT_NO_CONCURRENCY), so that the
+      # name and what it sits beside reach the same heckler run.
+      - name: Shipped hooks read a name that starts with a dash as a file
+        run: |
+          repo="$RUNNER_TEMP/dash-names"
+          git init -q "$repo"
+          git -C "$repo" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m init
+          python - "$repo" <<'EOF'
+          import json, sys
+          from pathlib import Path
+          repo = Path(sys.argv[1])
+          lock = {"lockfileVersion": 3, "packages": {"": {}, "node_modules/heckler-ci-not-installed": {"version": "9.9.9"}}}
+          (repo / "expected-finding.py").write_text("# " + chr(0x202E) + "\n", encoding="utf-8")
+          (repo / "--version").write_text("note\n", encoding="utf-8")
+          (repo / "-hf").mkdir()
+          for name in ("package-lock.json", "-hf/package-lock.json"):
+              (repo / name).write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+          EOF
+          git -C "$repo" add -A
+          cd "$repo"
+          for hook in heckler heckler-lockfile; do
+            if env -u GITHUB_ACTIONS PRE_COMMIT_NO_CONCURRENCY=1 pre-commit try-repo "$GITHUB_WORKSPACE" "$hook"; then
+              echo "::error::The $hook hook passed beside a staged name that starts with a dash."
+              exit 1
+            fi
+          done
+
   action:
     name: Action
     runs-on: ubuntu-latest

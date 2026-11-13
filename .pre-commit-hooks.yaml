@@ -4,7 +4,8 @@
   # Every file, not only the ones pre-commit takes for text: its test calls
   # a file binary for a single NUL in the first 1,024 bytes, which would let
   # one byte keep a file from the scan. --skip-binary has heckler decide.
-  entry: heckler --ci --skip-binary
+  # The -- ends heckler's options: every name pre-commit adds after it is a path.
+  entry: heckler --ci --skip-binary --
   language: python
   types: [file]
   require_serial: false
@@ -12,7 +13,8 @@
 - id: heckler-lockfile
   name: Heckler Dependency Check (changed packages)
   description: Scan changed dependencies for invisible Unicode attacks
-  entry: heckler --ci --scan-deps --diff-only
+  # As in the heckler hook, -- makes every name after it a path.
+  entry: heckler --ci --scan-deps --diff-only --
   language: python
   # Only the lockfiles heckler can parse; handed any other, it fails the hook
   # rather than pass a file it did not check. tests/test_lockfile.py keeps

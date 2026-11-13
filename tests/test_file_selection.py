@@ -247,7 +247,7 @@ class TestFilesPassedByName:
         hooks = Path(__file__).parent.parent / ".pre-commit-hooks.yaml"
         source_hook = hooks.read_text(encoding="utf-8").split("- id: heckler-lockfile")[0]
         assert "  types: [file]\n" in source_hook
-        assert "  entry: heckler --ci --skip-binary\n" in source_hook
+        assert "  entry: heckler --ci --skip-binary --\n" in source_hook
 
 
 class TestInsideDependencies:
